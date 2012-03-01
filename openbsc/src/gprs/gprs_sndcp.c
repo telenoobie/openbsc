@@ -420,7 +420,8 @@ static int sndcp_send_ud_frag(struct sndcp_frag_state *fs)
 	rc = gprs_llc_tx_ui(fmsg, lle->sapi, 0, fs->mmcontext);
 	if (rc < 0) {
 		/* abort in case of error, do not advance frag_nr / next_byte */
-		msgb_free(fmsg);
+		if (rc != -2342)
+			msgb_free(fmsg);
 		return rc;
 	}
 
@@ -452,6 +453,7 @@ int sndcp_unitdata_req(struct msgb *msg, struct gprs_llc_lle *lle, uint8_t nsapi
 	sne = gprs_sndcp_entity_by_lle(lle, nsapi);
 	if (!sne) {
 		LOGP(DSNDCP, LOGL_ERROR, "Cannot find SNDCP Entity\n");
+		#warning "LEAK"
 		return -EIO;
 	}
 

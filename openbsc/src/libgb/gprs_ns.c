@@ -249,7 +249,7 @@ static int gprs_ns_tx(struct gprs_nsvc *nsvc, struct msgb *msg)
 	default:
 		LOGP(DNS, LOGL_ERROR, "unsupported NS linklayer %u\n", nsvc->ll);
 		msgb_free(msg);
-		ret = -EIO;
+		ret = -2342;
 		break;
 	}
 	return ret;
@@ -562,7 +562,7 @@ int gprs_ns_sendmsg(struct gprs_ns_inst *nsi, struct msgb *msg)
 		LOGP(DNS, LOGL_ERROR, "Unable to resolve NSEI %u "
 			"to NS-VC!\n", msgb_nsei(msg));
 		msgb_free(msg);
-		return -EINVAL;
+		return -2342;
 	}
 	log_set_context(BSC_CTX_NSVC, nsvc);
 
@@ -570,13 +570,13 @@ int gprs_ns_sendmsg(struct gprs_ns_inst *nsi, struct msgb *msg)
 		LOGP(DNS, LOGL_ERROR, "NSEI=%u is not alive, cannot send\n",
 			nsvc->nsei);
 		msgb_free(msg);
-		return -EBUSY;
+		return -2342;
 	}
 	if (nsvc->state & NSE_S_BLOCKED) {
 		LOGP(DNS, LOGL_ERROR, "NSEI=%u is blocked, cannot send\n",
 			nsvc->nsei);
 		msgb_free(msg);
-		return -EBUSY;
+		return -2342;
 	}
 
 	msg->l2h = msgb_push(msg, sizeof(*nsh) + 3);
@@ -584,7 +584,7 @@ int gprs_ns_sendmsg(struct gprs_ns_inst *nsi, struct msgb *msg)
 	if (!nsh) {
 		LOGP(DNS, LOGL_ERROR, "Not enough headroom for NS header\n");
 		msgb_free(msg);
-		return -EIO;
+		return -2342;
 	}
 
 	nsh->pdu_type = NS_PDUT_UNITDATA;
@@ -997,8 +997,7 @@ static int nsip_sendmsg(struct gprs_nsvc *nsvc, struct msgb *msg)
 
 	rc = sendto(nsi->nsip.fd.fd, msg->data, msg->len, 0,
 		  (struct sockaddr *)daddr, sizeof(*daddr));
-
-	talloc_free(msg);
+	msgb_free(msg);
 
 	return rc;
 }
