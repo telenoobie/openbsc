@@ -262,6 +262,8 @@ int main(int argc, char **argv)
 	vty_init(&vty_info);
 	bsc_vty_init(&log_info);
 
+	meas_feed_init();
+
 #ifdef BUILD_SMPP
 	if (smpp_openbsc_init(tall_bsc_ctx, 0) < 0)
 		return -1;
