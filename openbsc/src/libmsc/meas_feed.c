@@ -16,6 +16,8 @@
 #include <openbsc/meas_feed.h>
 #include <openbsc/vty.h>
 
+#include "meas_feed.h"
+
 struct meas_feed_state {
 	struct osmo_wqueue wqueue;
 	char scenario[31+1];
@@ -94,7 +96,7 @@ static int feed_read_cb(struct osmo_fd *ofd, struct msgb *msg)
 	return rc;
 }
 
-static int meas_feed_cfg(const char *dst_host, uint16_t dst_port)
+int meas_feed_cfg_set(const char *dst_host, uint16_t dst_port)
 {
 	int rc;
 	int already_initialized = 0;
@@ -138,59 +140,19 @@ static int meas_feed_cfg(const char *dst_host, uint16_t dst_port)
 	return 0;
 }
 
-DEFUN(cfg_net_meas_feed, cfg_net_meas_feed_cmd,
-	"meas-feed destination ADDR <0-65535>",
-	"FIXME")
+void meas_feed_cfg_get(char **host, uint16_t *port)
 {
-	int rc;
-
-	rc = meas_feed_cfg(argv[0], atoi(argv[1]));
-	if (rc < 0)
-		return CMD_WARNING;
-
-	return CMD_SUCCESS;
+	*port = g_mfs.dst_port;
+	*host = g_mfs.dst_host;
 }
 
-DEFUN(meas_feed_scenario, meas_feed_scenario_cmd,
-	"meas-feed scenario NAME",
-	"FIXME")
+void meas_feed_scenario_set(const char *name)
 {
-	strncpy(g_mfs.scenario, argv[0], sizeof(g_mfs.scenario)-1);
+	strncpy(g_mfs.scenario, name, sizeof(g_mfs.scenario)-1);
 	g_mfs.scenario[sizeof(g_mfs.scenario)-1] = '\0';
-
-	return CMD_SUCCESS;
 }
 
-int meas_feed_init(void)
+const char *meas_feed_scenario_get(void)
 {
-	install_element(ENABLE_NODE, &meas_feed_scenario_cmd);
-	install_element(GSMNET_NODE, &cfg_net_meas_feed_cmd);
-
-	return 0;
+	return g_mfs.scenario;
 }
-
-#if 0
-{
-	struct gsm_rx_lev_qual *rq;
-	/* uplink measurements do always exist */
-	if (mr->flags & MEAS_REP_F_UL_DTX)
-		rq = &mr->ul.sub;
-	else
-		rq = &mr->ul.full;
-	/* FIXME */
-
-	if (mr->flags & MEAS_REP_F_DL_VALID) {
-		if (mr->flags & MEAS_REP_F_DL_DTX)
-			rq = &mr->dl.sub;
-		else
-			rq = &mr->dl.full;
-		/* FIXME */
-	}
-
-	if (mr->flags & MEAS_REP_F_MS_L1) {
-		/* FIXME */
-	}
-
-	return 0;
-}
-#endif
