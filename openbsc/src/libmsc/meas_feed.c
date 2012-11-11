@@ -55,10 +55,8 @@ static int process_meas_rep(struct gsm_meas_rep *mr)
 	strncpy(mfm->scenario, g_mfs.scenario, sizeof(mfm->scenario));
 	mfm->scenario[sizeof(mfm->scenario)-1] = '\0';
 
-	printf("NR: %u %s\n", mr->nr, osmo_hexdump(mr, sizeof(*mr)));
 	/* copy the entire measurement report */
 	memcpy(&mfm->mr, mr, sizeof(mfm->mr));
-	printf("%s\n\n", osmo_hexdump(&mfm->mr, sizeof(mfm->mr)));
 
 	/* and send it to the socket */
 	osmo_wqueue_enqueue(&g_mfs.wqueue, msg);
@@ -104,7 +102,6 @@ static int meas_feed_cfg(const char *dst_host, uint16_t dst_port)
 	if (g_mfs.wqueue.bfd.fd)
 		already_initialized = 1;
 
-	printf("already_initialized=%d\n", already_initialized);
 
 	if (already_initialized &&
 	    !strcmp(dst_host, g_mfs.dst_host) &&
@@ -137,8 +134,6 @@ static int meas_feed_cfg(const char *dst_host, uint16_t dst_port)
 		talloc_free(g_mfs.dst_host);
 	g_mfs.dst_host = talloc_strdup(NULL, dst_host);
 	g_mfs.dst_port = dst_port;
-
-	printf("MEAS FEED FD: %d\n", g_mfs.wqueue.bfd.fd);
 
 	return 0;
 }
