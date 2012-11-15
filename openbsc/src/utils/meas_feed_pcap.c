@@ -109,8 +109,10 @@ int main(int argc, char **argv)
 	pcap_t *pc;
 	int rc;
 
-	if (argc < 3)
+	if (argc < 3) {
+		fprintf(stderr, "You need to specify PCAP and database file\n");
 		exit(2);
+	}
 
 	pcap_fname = argv[1];
 	db_fname = argv[2];
