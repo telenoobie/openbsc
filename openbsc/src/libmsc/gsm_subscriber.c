@@ -334,6 +334,8 @@ int subscr_update(struct gsm_subscriber *s, struct gsm_bts *bts, int reason)
 		s->net = bts->network;
 		/* Indicate "attached to LAC" */
 		s->lac = bts->location_area_code;
+		s->mnc = bts->network_code;
+		s->mcc = bts->country_code;
 
 		/* FIXME: We should allow 0 for T3212 as well to disable the
 		 * location update period. In that case we will need a way to
