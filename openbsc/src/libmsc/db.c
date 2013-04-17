@@ -42,7 +42,7 @@ static char *db_basename = NULL;
 static char *db_dirname = NULL;
 static dbi_conn conn;
 
-#define SCHEMA_REVISION "3"
+#define SCHEMA_REVISION "50000000"
 
 static char *create_stmts[] = {
 	"CREATE TABLE IF NOT EXISTS Meta ("
@@ -96,7 +96,6 @@ static char *create_stmts[] = {
 		"id INTEGER PRIMARY KEY AUTOINCREMENT, "
 		"created TIMESTAMP NOT NULL, "
 		"sent TIMESTAMP, "
-		"sender_id INTEGER NOT NULL, "
 		"receiver_id INTEGER NOT NULL, "
 		"deliver_attempts INTEGER NOT NULL DEFAULT 0, "
 		/* data directly copied/derived from SMS */
@@ -106,7 +105,12 @@ static char *create_stmts[] = {
 		"protocol_id INTEGER NOT NULL, "
 		"data_coding_scheme INTEGER NOT NULL, "
 		"ud_hdr_ind INTEGER NOT NULL, "
-		"dest_addr TEXT, "
+		"src_addr TEXT NOT NULL, "
+		"src_ton INTEGER NOT NULL, "
+		"src_npi INTEGER NOT NULL, "
+		"dest_addr TEXT NOT NULL, "
+		"dest_ton INTEGER NOT NULL, "
+		"dest_npi INTEGER NOT NULL, "
 		"user_data BLOB, "	/* TP-UD */
 		/* additional data, interpreted from SMS */
 		"header BLOB, "		/* UD Header */
@@ -1119,13 +1123,14 @@ int db_subscriber_assoc_imei(struct gsm_subscriber *subscriber, char imei[GSM_IM
 int db_sms_store(struct gsm_sms *sms)
 {
 	dbi_result result;
-	char *q_text, *q_daddr;
+	char *q_text, *q_daddr, *q_saddr;
 	unsigned char *q_udata;
 	char received_timestamp[22];
 	char validity_timestamp[22];
 
 	dbi_conn_quote_string_copy(conn, (char *)sms->text, &q_text);
 	dbi_conn_quote_string_copy(conn, (char *)sms->dst.addr, &q_daddr);
+	dbi_conn_quote_string_copy(conn, (char *)sms->src.addr, &q_saddr);
 	dbi_conn_quote_binary_copy(conn, sms->user_data, sms->user_data_len,
 				   &q_udata);
 	strftime(received_timestamp, sizeof(received_timestamp),
@@ -1134,20 +1139,28 @@ int db_sms_store(struct gsm_sms *sms)
 			 "'%F %T'", localtime(&sms->valid_until));
 	result = dbi_conn_queryf(conn,
 		"INSERT INTO SMS "
-		"(created, sender_id, receiver_id, valid_until, "
+		"(created, receiver_id, valid_until, "
 		 "reply_path_req, status_rep_req, protocol_id, "
-		 "data_coding_scheme, ud_hdr_ind, dest_addr, "
-		 "user_data, text) VALUES "
-		"(%s, %llu, %llu, %s, "
-		 "%u, %u, %u, %u, %u, %s, %s, %s)",
-		received_timestamp, sms->sender->id,
-		sms->receiver ? sms->receiver->id : 0, validity_timestamp,
+		 "data_coding_scheme, ud_hdr_ind, "
+		 "user_data, text, "
+		 "dest_addr, dest_ton, dest_npi, "
+		 "src_addr, src_ton, src_npi) VALUES "
+		"(%s, %llu, %s, "
+		"%u, %u, %u, "
+		"%u, %u, "
+		"%s, %s, "
+		"%s, %u, %u, "
+		"%s, %u, %u)",
+		received_timestamp, sms->receiver ? sms->receiver->id : 0, validity_timestamp,
 		sms->reply_path_req, sms->status_rep_req, sms->protocol_id,
 		sms->data_coding_scheme, sms->ud_hdr_ind,
-		q_daddr, q_udata, q_text);
+		q_udata, q_text,
+		q_daddr, sms->dst.ton, sms->dst.npi,
+		q_saddr, sms->src.ton, sms->src.npi);
 	free(q_text);
-	free(q_daddr);
 	free(q_udata);
+	free(q_daddr);
+	free(q_saddr);
 
 	if (!result)
 		return -EIO;
@@ -1159,18 +1172,14 @@ int db_sms_store(struct gsm_sms *sms)
 static struct gsm_sms *sms_from_result(struct gsm_network *net, dbi_result result)
 {
 	struct gsm_sms *sms = sms_alloc();
-	long long unsigned int sender_id, receiver_id;
-	const char *text, *daddr;
+	long long unsigned int receiver_id;
+	const char *text, *daddr, *saddr;
 	const unsigned char *user_data;
 
 	if (!sms)
 		return NULL;
 
 	sms->id = dbi_result_get_ulonglong(result, "id");
-
-	sender_id = dbi_result_get_ulonglong(result, "sender_id");
-	sms->sender = subscr_get_by_id(net, sender_id);
-	strncpy(sms->src.addr, sms->sender->extension, sizeof(sms->src.addr)-1);
 
 	receiver_id = dbi_result_get_ulonglong(result, "receiver_id");
 	sms->receiver = subscr_get_by_id(net, receiver_id);
@@ -1186,10 +1195,20 @@ static struct gsm_sms *sms_from_result(struct gsm_network *net, dbi_result resul
 	sms->valid_until = dbi_result_get_datetime(result, "valid_until");
 	/* sms->msg_ref is temporary and not stored in DB */
 
+	sms->dst.npi = dbi_result_get_uint(result, "dest_npi");
+	sms->dst.ton = dbi_result_get_uint(result, "dest_ton");
 	daddr = dbi_result_get_string(result, "dest_addr");
 	if (daddr) {
 		strncpy(sms->dst.addr, daddr, sizeof(sms->dst.addr));
 		sms->dst.addr[sizeof(sms->dst.addr)-1] = '\0';
+	}
+
+	sms->src.npi = dbi_result_get_uint(result, "src_npi");
+	sms->src.ton = dbi_result_get_uint(result, "src_ton");
+	saddr = dbi_result_get_string(result, "src_addr");
+	if (saddr) {
+		strncpy(sms->src.addr, saddr, sizeof(sms->src.addr));
+		sms->src.addr[sizeof(sms->src.addr)-1] = '\0';
 	}
 
 	sms->user_data_len = dbi_result_get_field_length(result, "user_data");
