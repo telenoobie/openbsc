@@ -1,7 +1,7 @@
 /* The concept of a subscriber for the MSC, roughly HLR/VLR functionality */
 
 /* (C) 2008 by Harald Welte <laforge@gnumonks.org>
- * (C) 2009 by Holger Hans Peter Freyther <zecke@selfish.org>
+ * (C) 2009,2013 by Holger Hans Peter Freyther <zecke@selfish.org>
  *
  * All Rights Reserved
  *
@@ -323,6 +323,18 @@ struct gsm_subscriber *subscr_get_by_id(struct gsm_network *net,
 	return db_get_subscriber(net, GSM_SUBSCRIBER_ID, buf);
 }
 
+void subscr_update_expire_lu(struct gsm_subscriber *s)
+{
+	/* Table 10.5.33: The T3212 timeout value field is coded as the
+	 * binary representation of the timeout value for
+	 * periodic updating in decihours. Mark the subscriber as
+	 * inactive if it missed two consecutive location updates.
+	 * Timeout is twice the t3212 value plus one minute */
+	s->expire_lu = time(NULL) +
+			(bts->si_common.chan_desc.t3212 * 60 * 6 * 2) + 60;
+	rc = db_sync_subscriber(s);
+	db_subscriber_update(s);
+}
 
 int subscr_update(struct gsm_subscriber *s, struct gsm_bts *bts, int reason)
 {
@@ -337,24 +349,15 @@ int subscr_update(struct gsm_subscriber *s, struct gsm_bts *bts, int reason)
 		s->mnc = bts->network_code;
 		s->mcc = bts->country_code;
 
+		LOGP(DMM, LOGL_INFO, "Subscriber %s ATTACHED LAC=%u\n",
+			subscr_name(s), s->lac);
+
 		/* FIXME: We should allow 0 for T3212 as well to disable the
 		 * location update period. In that case we will need a way to
 		 * indicate that in the database and then reenable that value in
 		 * VTY.
 		 */
-
-		/* Table 10.5.33: The T3212 timeout value field is coded as the
-		 * binary representation of the timeout value for
-		 * periodic updating in decihours. Mark the subscriber as
-		 * inactive if it missed two consecutive location updates.
-		 * Timeout is twice the t3212 value plus one minute */
-		s->expire_lu = time(NULL) +
-			(bts->si_common.chan_desc.t3212 * 60 * 6 * 2) + 60;
-
-		LOGP(DMM, LOGL_INFO, "Subscriber %s ATTACHED LAC=%u\n",
-			subscr_name(s), s->lac);
-		rc = db_sync_subscriber(s);
-		db_subscriber_update(s);
+		subscr_update_expire_lu(s);
 		osmo_signal_dispatch(SS_SUBSCR, S_SUBSCR_ATTACHED, s);
 		break;
 	case GSM_SUBSCRIBER_UPDATE_DETACHED:
@@ -385,8 +388,14 @@ void subscr_update_from_db(struct gsm_subscriber *sub)
 static void subscr_expire_callback(void *data, long long unsigned int id)
 {
 	struct gsm_network *net = data;
-	struct gsm_subscriber *s =
-		subscr_get_by_id(net, id);
+	struct gsm_subscriber *s = subscr_get_by_id(net, id);
+	struct gsm_subscriber_connection *conn = connection_for_subscr(s);
+
+	if (conn && conn->expire_timer_stopped) {
+		subscr_update_expire_lu(s);
+		return;
+	}
+
 
 	LOGP(DMM, LOGL_NOTICE, "Expiring inactive subscriber %s (ID %i)\n",
 			subscr_name(s), id);
