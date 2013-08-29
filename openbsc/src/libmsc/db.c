@@ -41,8 +41,36 @@
 static char *db_basename = NULL;
 static char *db_dirname = NULL;
 static dbi_conn conn;
+static struct gsm_sms *sms_from_result(struct gsm_network *net, dbi_result result);
 
-#define SCHEMA_REVISION "50000000"
+#define SCHEMA_REVISION "4"
+
+#define SMS_TABLE_CREATE_STMT \
+	"CREATE TABLE IF NOT EXISTS SMS (" \
+		/* metadata, not part of sms */ \
+		"id INTEGER PRIMARY KEY AUTOINCREMENT, " \
+		"created TIMESTAMP NOT NULL, " \
+		"sent TIMESTAMP, " \
+		"receiver_id INTEGER NOT NULL, " \
+		"deliver_attempts INTEGER NOT NULL DEFAULT 0, " \
+		/* data directly copied/derived from SMS */ \
+		"valid_until TIMESTAMP, " \
+		"reply_path_req INTEGER NOT NULL, " \
+		"status_rep_req INTEGER NOT NULL, " \
+		"protocol_id INTEGER NOT NULL, " \
+		"data_coding_scheme INTEGER NOT NULL, " \
+		"ud_hdr_ind INTEGER NOT NULL, " \
+		"src_addr TEXT NOT NULL, " \
+		"src_ton INTEGER NOT NULL, " \
+		"src_npi INTEGER NOT NULL, " \
+		"dest_addr TEXT NOT NULL, " \
+		"dest_ton INTEGER NOT NULL, " \
+		"dest_npi INTEGER NOT NULL, " \
+		"user_data BLOB, "	/* TP-UD */ \
+		/* additional data, interpreted from SMS */ \
+		"header BLOB, "		/* UD Header */ \
+		"text TEXT "		/* decoded UD after UDH */ \
+		")"
 
 static char *create_stmts[] = {
 	"CREATE TABLE IF NOT EXISTS Meta ("
@@ -91,31 +119,7 @@ static char *create_stmts[] = {
 		"equipment_id NUMERIC NOT NULL, "
 		"UNIQUE (subscriber_id, equipment_id) "
 		")",
-	"CREATE TABLE IF NOT EXISTS SMS ("
-		/* metadata, not part of sms */
-		"id INTEGER PRIMARY KEY AUTOINCREMENT, "
-		"created TIMESTAMP NOT NULL, "
-		"sent TIMESTAMP, "
-		"receiver_id INTEGER NOT NULL, "
-		"deliver_attempts INTEGER NOT NULL DEFAULT 0, "
-		/* data directly copied/derived from SMS */
-		"valid_until TIMESTAMP, "
-		"reply_path_req INTEGER NOT NULL, "
-		"status_rep_req INTEGER NOT NULL, "
-		"protocol_id INTEGER NOT NULL, "
-		"data_coding_scheme INTEGER NOT NULL, "
-		"ud_hdr_ind INTEGER NOT NULL, "
-		"src_addr TEXT NOT NULL, "
-		"src_ton INTEGER NOT NULL, "
-		"src_npi INTEGER NOT NULL, "
-		"dest_addr TEXT NOT NULL, "
-		"dest_ton INTEGER NOT NULL, "
-		"dest_npi INTEGER NOT NULL, "
-		"user_data BLOB, "	/* TP-UD */
-		/* additional data, interpreted from SMS */
-		"header BLOB, "		/* UD Header */
-		"text TEXT "		/* decoded UD after UDH */
-		")",
+	SMS_TABLE_CREATE_STMT,
 	"CREATE TABLE IF NOT EXISTS VLR ("
 		"id INTEGER PRIMARY KEY AUTOINCREMENT, "
 		"created TIMESTAMP NOT NULL, "
@@ -176,7 +180,7 @@ static int update_db_revision_2(void)
 				"TIMESTAMP DEFAULT NULL");
 	if (!result) {
 		LOGP(DDB, LOGL_ERROR,
-		     "Failed to alter table Subscriber (upgrade vom rev 2).\n");
+		     "Failed to alter table Subscriber (upgrade from rev 2).\n");
 		return -EINVAL;
 	}
 	dbi_result_free(result);
@@ -187,7 +191,138 @@ static int update_db_revision_2(void)
 				"WHERE key = 'revision'");
 	if (!result) {
 		LOGP(DDB, LOGL_ERROR,
-		     "Failed set new revision (upgrade vom rev 2).\n");
+		     "Failed to update DB schema revision  (upgrade from rev 2).\n");
+		return -EINVAL;
+	}
+	dbi_result_free(result);
+
+	return 0;
+}
+
+
+static struct gsm_sms *sms_from_result_v3(dbi_result result)
+{
+	struct gsm_sms *sms = sms_alloc();
+	long long unsigned int sender_id;
+	struct gsm_subscriber *sender;
+	const char *text, *daddr;
+	const unsigned char *user_data;
+	char buf[32];
+
+	if (!sms)
+		return NULL;
+
+	sms->id = dbi_result_get_ulonglong(result, "id");
+
+	sender_id = dbi_result_get_ulonglong(result, "sender_id");
+	sprintf(buf, "%llu", sender_id);
+	sender = db_get_subscriber(NULL, GSM_SUBSCRIBER_ID, buf);
+	strncpy(sms->src.addr, sender->extension, sizeof(sms->src.addr)-1);
+	subscr_put(sender);
+
+	sms->receiver = NULL;
+
+	/* FIXME: validity */
+	/* FIXME: those should all be get_uchar, but sqlite3 is braindead */
+	sms->reply_path_req = dbi_result_get_uint(result, "reply_path_req");
+	sms->status_rep_req = dbi_result_get_uint(result, "status_rep_req");
+	sms->ud_hdr_ind = dbi_result_get_uint(result, "ud_hdr_ind");
+	sms->protocol_id = dbi_result_get_uint(result, "protocol_id");
+	sms->data_coding_scheme = dbi_result_get_uint(result,
+						  "data_coding_scheme");
+	/* sms->msg_ref is temporary and not stored in DB */
+
+	daddr = dbi_result_get_string(result, "dest_addr");
+	if (daddr) {
+		strncpy(sms->dst.addr, daddr, sizeof(sms->dst.addr));
+		sms->dst.addr[sizeof(sms->dst.addr)-1] = '\0';
+	}
+
+	sms->user_data_len = dbi_result_get_field_length(result, "user_data");
+	user_data = dbi_result_get_binary(result, "user_data");
+	if (sms->user_data_len > sizeof(sms->user_data))
+		sms->user_data_len = (uint8_t) sizeof(sms->user_data);
+	memcpy(sms->user_data, user_data, sms->user_data_len);
+
+	text = dbi_result_get_string(result, "text");
+	if (text) {
+		strncpy(sms->text, text, sizeof(sms->text));
+		sms->text[sizeof(sms->text)-1] = '\0';
+	}
+	return sms;
+}
+
+static int update_db_revision_3(void)
+{
+	dbi_result result;
+	struct gsm_sms *sms;
+
+	/* Rename old SMS table to be able create a new one */
+	result = dbi_conn_query(conn,
+				"ALTER TABLE SMS "
+				"RENAME TO SMS_3");
+	if (!result) {
+		LOGP(DDB, LOGL_ERROR,
+		     "Failed to rename the old SMS table (upgrade from rev 3).\n");
+		return -EINVAL;
+	}
+	dbi_result_free(result);
+
+	/* Create new SMS table with all the bells and whistles! */
+	result = dbi_conn_query(conn,
+				SMS_TABLE_CREATE_STMT);
+	if (!result) {
+		LOGP(DDB, LOGL_ERROR,
+		     "Failed to create a new SMS table (upgrade from rev 3).\n");
+		return -EINVAL;
+	}
+	dbi_result_free(result);
+
+	/* Cycle through old messages and convert them to the new format */
+	result = dbi_conn_queryf(conn,
+				"SELECT * FROM SMS_3");
+	if (!result) {
+		LOGP(DDB, LOGL_ERROR,
+		     "Failed fetch messages from the old SMS table (upgrade from rev 3).\n");
+		return -EINVAL;
+	}
+	while (dbi_result_next_row(result)) {
+		sms = sms_from_result_v3(result);
+		if (db_sms_store(sms) != 0) {
+			LOGP(DDB, LOGL_ERROR, "Failed to store message to the new SMS table(upgrade from rev 3).\n");
+		}
+		sms_free(sms);
+	}
+	dbi_result_free(result);
+
+	/* Mark SMS_3 table for removal */
+	result = dbi_conn_query(conn,
+				"DROP TABLE SMS_3");
+	if (!result) {
+		LOGP(DDB, LOGL_ERROR,
+		     "Failed to drop the old SMS table (upgrade from rev 3).\n");
+		return -EINVAL;
+	}
+	dbi_result_free(result);
+
+	/* Shrink DB file size by actually wiping out SMS_3 table data */
+	result = dbi_conn_query(conn,
+				"VACUUM");
+	if (!result) {
+		LOGP(DDB, LOGL_ERROR,
+		     "Failed VACUUM after droping the old SMS table (upgrade from rev 3).\n");
+		return -EINVAL;
+	}
+	dbi_result_free(result);
+
+	/* We're done. Bump DB Meta revision to 4 */
+	result = dbi_conn_query(conn,
+				"UPDATE Meta "
+				"SET value = '4' "
+				"WHERE key = 'revision'");
+	if (!result) {
+		LOGP(DDB, LOGL_ERROR,
+		     "Failed to update DB schema revision (upgrade from rev 3).\n");
 		return -EINVAL;
 	}
 	dbi_result_free(result);
@@ -220,6 +355,12 @@ static int check_db_revision(void)
 			dbi_result_free(result);
 			return -EINVAL;
 		}
+	} else if (!strcmp(rev_s, "3")) {
+			if (update_db_revision_3()) {
+				LOGP(DDB, LOGL_FATAL, "Failed to update database from schema revision '%s'.\n", rev_s);
+				dbi_result_free(result);
+				return -EINVAL;
+			}
 	} else if (!strcmp(rev_s, SCHEMA_REVISION)) {
 		/* everything is fine */
 	} else {
