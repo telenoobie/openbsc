@@ -81,6 +81,8 @@ static struct gbprox_peer *peer_by_nsvc(struct gprs_nsvc *nsvc)
 /* look-up a peer by its Routeing Area Code (RAC) */
 static struct gbprox_peer *peer_by_rac(const uint8_t *ra)
 {
+	/* TODO: should probably be peers_by_rac as there is no
+	 * code that makes this unique. */
 	struct gbprox_peer *peer;
 	llist_for_each_entry(peer, &gbprox_bts_peers, list) {
 		if (!memcmp(peer->ra, ra, 6))
@@ -92,6 +94,8 @@ static struct gbprox_peer *peer_by_rac(const uint8_t *ra)
 /* look-up a peer by its Location Area Code (LAC) */
 static struct gbprox_peer *peer_by_lac(const uint8_t *la)
 {
+	/* TODO: should probably be peers_by_lac as there is no
+	 * code that makes this unique. */
 	struct gbprox_peer *peer;
 	llist_for_each_entry(peer, &gbprox_bts_peers, list) {
 		if (!memcmp(peer->ra, la, 5))
@@ -100,15 +104,25 @@ static struct gbprox_peer *peer_by_lac(const uint8_t *la)
 	return NULL;
 }
 
-static struct gbprox_peer *peer_alloc(uint16_t bvci)
+static struct gbprox_peer *peer_alloc(uint16_t bvci, struct gprs_nsvc *nsvc)
 {
 	struct gbprox_peer *peer;
+
+	/* Add some sanity checking for the GPRS NSVC */
+	llist_for_each_entry(peer, &gbprox_bts_peers, list) {
+		if (peer->nsvc != nsvc)
+			continue;
+		LOGP(DGPRS, LOGL_ERROR,
+			"NSVC=%u/NSEI=%u already associated. Now BVCI=%u.\n",
+			peer->nsvc->nsvci, peer->nsvc->nsei, bvci);
+	}
 
 	peer = talloc_zero(tall_bsc_ctx, struct gbprox_peer);
 	if (!peer)
 		return NULL;
 
 	peer->bvci = bvci;
+	peer->nsvc = nsvc;
 	llist_add(&peer->list, &gbprox_bts_peers);
 
 	return peer;
@@ -300,7 +314,8 @@ static int gbprox_rx_sig_from_bss(struct msgb *msg, struct gprs_nsvc *nsvc,
 			"RAC snooping: RAC %u-%u-%u-%u behind BVCI=%u, "
 			"NSVCI=%u\n",nsvc->nsei, raid.mcc, raid.mnc, raid.lac,
 			raid.rac , from_peer->bvci, nsvc->nsvci);
-		/* FIXME: This only supports one BSS per RA */
+		/* FIXME: This only supports one BSS per RA .. but doesn't
+		   enforce it... E.g. 'last' RA seen would be okay */
 		break;
 	case BSSGP_PDUT_BVC_RESET:
 		/* If we receive a BVC reset on the signalling endpoint, we
@@ -324,8 +339,7 @@ static int gbprox_rx_sig_from_bss(struct msgb *msg, struct gprs_nsvc *nsvc,
 				LOGP(DGPRS, LOGL_INFO, "Allocationg new peer for "
 				     "BVCI=%u via NSVCI=%u/NSEI=%u\n", bvci,
 				     nsvc->nsvci, nsvc->nsei);
-				from_peer = peer_alloc(bvci);
-				from_peer->nsvc = nsvc;
+				from_peer = peer_alloc(bvci, nsvc);
 			}
 			if (TLVP_PRESENT(&tp, BSSGP_IE_CELL_ID)) {
 				struct gprs_ra_id raid;
@@ -566,8 +580,7 @@ int gbprox_rcvmsg(struct msgb *msg, struct gprs_nsvc *nsvc, uint16_t ns_bvci)
 			LOGP(DGPRS, LOGL_INFO, "Allocationg new peer for "
 			     "BVCI=%u via NSVC=%u/NSEI=%u\n", ns_bvci,
 			     nsvc->nsvci, nsvc->nsei);
-			peer = peer_alloc(ns_bvci);
-			peer->nsvc = nsvc;
+			peer = peer_alloc(ns_bvci, nsvc);
 		}
 		if (peer->blocked) {
 			LOGP(DGPRS, LOGL_NOTICE, "Dropping PDU for "
