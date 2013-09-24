@@ -1,3 +1,9 @@
+openbsc (0.9.14~z11) UNRELEASED; urgency=low
+
+  * Fix USSD handling (experimental)
+
+ -- Jacob Erlbeck <jerlbeck@sysmocom.de>  Tue, 24 Sep 2013 21:37:47 +0200
+
 openbsc (0.9.14~z10) UNRELEASED; urgency=low
 
   * New BSC for SI testing on PCS1900
