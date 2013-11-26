@@ -1121,24 +1121,26 @@ int db_sms_store(struct gsm_sms *sms)
 	dbi_result result;
 	char *q_text, *q_daddr;
 	unsigned char *q_udata;
-	char *validity_timestamp = "2222-2-2";
-
-	/* FIXME: generate validity timestamp based on validity_minutes */
+	char received_timestamp[22];
+	char validity_timestamp[22];
 
 	dbi_conn_quote_string_copy(conn, (char *)sms->text, &q_text);
 	dbi_conn_quote_string_copy(conn, (char *)sms->dst.addr, &q_daddr);
 	dbi_conn_quote_binary_copy(conn, sms->user_data, sms->user_data_len,
 				   &q_udata);
-	/* FIXME: correct validity period */
+	strftime(received_timestamp, sizeof(received_timestamp),
+			 "'%F %T'", localtime(&sms->received_time));
+	strftime(validity_timestamp, sizeof(validity_timestamp),
+			 "'%F %T'", localtime(&sms->valid_until));
 	result = dbi_conn_queryf(conn,
 		"INSERT INTO SMS "
 		"(created, sender_id, receiver_id, valid_until, "
 		 "reply_path_req, status_rep_req, protocol_id, "
 		 "data_coding_scheme, ud_hdr_ind, dest_addr, "
 		 "user_data, text) VALUES "
-		"(datetime('now'), %llu, %llu, %u, "
+		"(%s, %llu, %llu, %s, "
 		 "%u, %u, %u, %u, %u, %s, %s, %s)",
-		sms->sender->id,
+		received_timestamp, sms->sender->id,
 		sms->receiver ? sms->receiver->id : 0, validity_timestamp,
 		sms->reply_path_req, sms->status_rep_req, sms->protocol_id,
 		sms->data_coding_scheme, sms->ud_hdr_ind,
@@ -1173,7 +1175,6 @@ static struct gsm_sms *sms_from_result(struct gsm_network *net, dbi_result resul
 	receiver_id = dbi_result_get_ulonglong(result, "receiver_id");
 	sms->receiver = subscr_get_by_id(net, receiver_id);
 
-	/* FIXME: validity */
 	/* FIXME: those should all be get_uchar, but sqlite3 is braindead */
 	sms->reply_path_req = dbi_result_get_uint(result, "reply_path_req");
 	sms->status_rep_req = dbi_result_get_uint(result, "status_rep_req");
@@ -1181,6 +1182,8 @@ static struct gsm_sms *sms_from_result(struct gsm_network *net, dbi_result resul
 	sms->protocol_id = dbi_result_get_uint(result, "protocol_id");
 	sms->data_coding_scheme = dbi_result_get_uint(result,
 						  "data_coding_scheme");
+	sms->received_time = dbi_result_get_datetime(result, "created");
+	sms->valid_until = dbi_result_get_datetime(result, "valid_until");
 	/* sms->msg_ref is temporary and not stored in DB */
 
 	daddr = dbi_result_get_string(result, "dest_addr");
