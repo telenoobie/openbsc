@@ -287,8 +287,11 @@ static int gsm340_gen_tpdu(struct msgb *msg, struct gsm_sms *sms)
 }
 
 static int sms_queue_try_deliver(struct gsm_subscriber_connection *conn,
-                                 struct msgb *msg, struct gsm_sms *gsms)
+                                 struct msgb *msg, struct gsm_sms *gsms,
+                                 uint8_t sms_mti)
 {
+	int rc = 0;
+
 	/* determine gsms->receiver based on dialled number */
 	gsms->receiver = subscr_get_by_extension(conn->bts->network, gsms->dst.addr);
 	if (!gsms->receiver) {
@@ -435,7 +438,7 @@ static int gsm340_rx_tpdu(struct gsm_subscriber_connection *conn, struct msgb *m
 	/* FIXME: This looks very wrong */
 	send_signal(0, NULL, gsms, 0);
 
-	rc = sms_queue_try_deliver(conn, msg, gsms);
+	rc = sms_queue_try_deliver(conn, msg, gsms, sms_mti);
 	if (rc == GSM411_RP_CAUSE_MO_NUM_UNASSIGNED) {
 #ifdef BUILD_SMPP
 		rc = smpp_try_deliver(gsms, conn);
