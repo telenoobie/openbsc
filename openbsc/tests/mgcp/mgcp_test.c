@@ -636,6 +636,10 @@ static void test_packet_error_detection(int patch_ssrc, int patch_ts)
 	 * trunk.endpoints are set up properly. */
 	mgcp_free_endp(&endp);
 
+	/* There is no MGCP/SDP around, so set this by hand to make timestamp
+	 * patching possible */
+	rtp->packet_duration_ms = 20;
+
 	rtp->payload_type = 98;
 
 	for (i = 0; i < ARRAY_SIZE(test_rtp_packets1); ++i) {
