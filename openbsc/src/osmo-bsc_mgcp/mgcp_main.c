@@ -142,7 +142,8 @@ static int mgcp_change_cb(struct mgcp_trunk_config *cfg, int endpoint, int state
 	if (state != MGCP_ENDP_MDCX)
 		return 0;
 
-	mgcp_send_dummy(&cfg->endpoints[endpoint]);
+	// TODO: remove this or the whole cb
+	// mgcp_send_dummy(&cfg->endpoints[endpoint]);
 	return 0;
 }
 
