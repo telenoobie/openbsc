@@ -361,19 +361,19 @@ static void test_arfcn_filter()
 
 	/* check with range1024 */
 	for (i = 0; i < ARRAY_SIZE(arfcns); ++i)
-		arfcns[i] = (i + 1) * 2;
+		arfcns[i] = i * 2;
 	res = range_enc_filter_arfcns(ARFCN_RANGE_1024, arfcns, ARRAY_SIZE(arfcns),
 			arfcns[0], &f0_included);
 	VERIFY(res, ==, ARRAY_SIZE(arfcns) - 1);
 	VERIFY(f0_included, ==, 1);
 	for (i = 0; i < res; ++i)
-		VERIFY(arfcns[i], ==, ((i + 2) * 2) - 1);
+		VERIFY(arfcns[i], ==, (i + 1) * 2);
 
-	/* check with range1024, not included */
+	/* check with range1024, ARFCN 0 not included */
 	for (i = 0; i < ARRAY_SIZE(arfcns); ++i)
 		arfcns[i] = (i + 1) * 2;
 	res = range_enc_filter_arfcns(ARFCN_RANGE_1024, arfcns, ARRAY_SIZE(arfcns),
-			11, &f0_included);
+			arfcns[0], &f0_included);
 	VERIFY(res, ==, ARRAY_SIZE(arfcns));
 	VERIFY(f0_included, ==, 0);
 	for (i = 0; i < res; ++i)
@@ -434,11 +434,11 @@ static void test_si_range_helpers()
 	}
 
 	i = range_enc_determine_range(range128, ARRAY_SIZE(range128), &f0);
-	VERIFY(i, ==, ARFCN_RANGE_512);
+	VERIFY(i, ==, ARFCN_RANGE_128);
 	VERIFY(f0, ==, 1);
 
 	i = range_enc_determine_range(range256, ARRAY_SIZE(range256), &f0);
-	VERIFY(i, ==, ARFCN_RANGE_512);
+	VERIFY(i, ==, ARFCN_RANGE_256);
 	VERIFY(f0, ==, 1);
 
 	i = range_enc_determine_range(range512, ARRAY_SIZE(range512), &f0);
