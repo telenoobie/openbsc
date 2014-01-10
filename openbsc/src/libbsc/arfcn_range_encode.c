@@ -160,12 +160,14 @@ int range_enc_determine_range(const int *arfcns, const int size, int *f0)
 	max = arfcns[size - 1] - arfcns[0];
 	*f0 = arfcns[0];
 
+	if (max < 512 && size <= 18)
+		return ARFCN_RANGE_512;
+
+	/* The following are nyi, so they are checked last */
 	if (max < 128 && size <= 29)
 		return ARFCN_RANGE_128;
 	if (max < 256 && size <= 22)
 		return ARFCN_RANGE_256;
-	if (max < 512 && size <= 18)
-		return ARFCN_RANGE_512;
 	if (max < 1024 && size <= 17)
 		return ARFCN_RANGE_1024;
 

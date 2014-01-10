@@ -137,11 +137,11 @@ int main(int argc, char **argv)
 	}
 
 	i = range_enc_determine_range(range128, ARRAY_SIZE(range128), &f0);
-	VERIFY(i, ==, ARFCN_RANGE_128);
+	VERIFY(i, ==, ARFCN_RANGE_512);
 	VERIFY(f0, ==, 1);
 
 	i = range_enc_determine_range(range256, ARRAY_SIZE(range256), &f0);
-	VERIFY(i, ==, ARFCN_RANGE_256);
+	VERIFY(i, ==, ARFCN_RANGE_512);
 	VERIFY(f0, ==, 1);
 
 	i = range_enc_determine_range(range512, ARRAY_SIZE(range512), &f0);
