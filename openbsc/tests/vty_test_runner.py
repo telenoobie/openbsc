@@ -230,6 +230,61 @@ class TestVTYNITB(TestVTYGenericBSC):
         res = self.vty.command("show paging-group 0 1234567")
         self.assertEquals(res, "%Paging group for IMSI 1234567 on BTS #0 is 7")
 
+    def testE1InputKeepAlive(self):
+        self.vty.enable()
+        self.vty.command("configure terminal")
+        self.vty.command("e1_input")
+
+        self.assertEquals(self.vty.node(), 'config-e1_input')
+
+        # Check for keepalive command
+        res = self.vty.command("list")
+        if not res.find('  e1_line <0-255> keepalive\r') > 0:
+            print("Skipping the E1 input keep-alive test")
+            return
+
+        # Test invalid input
+        self.vty.verify("e1_line 200 keepalive", ["% Line 200 doesn't exist"])
+        self.vty.verify("e1_line 200 keepalive 1", ["% Command incomplete."])
+        self.vty.verify("e1_line 200 keepalive 1 2", ["% Command incomplete."])
+        self.vty.verify("no e1_line 200 keepalive 1 2 3", ["% Unknown command."])
+
+        # Setup driver
+        self.vty.verify("e1_line 201 driver misdn", [''])
+        self.vty.verify("e1_line 202 driver misdn_lapd", [''])
+        self.vty.verify("e1_line 204 driver ipa", [''])
+
+        # Test misdn
+        self.vty.verify("e1_line 201 keepalive", ["% Driver 'misdn' does not support keep alive"])
+        res = self.vty.command("write terminal")
+        self.assert_(res.find("no e1_line 201 keepalive\r") > 0)
+
+        self.vty.verify("no e1_line 201 keepalive", [""])
+
+        # Test misdn_lapd
+        self.vty.verify("e1_line 202 keepalive", ["% Driver 'misdn_lapd' does not support keep alive"])
+        res = self.vty.command("write terminal")
+        self.assert_(res.find("no e1_line 202 keepalive\r") > 0)
+
+        self.vty.verify("no e1_line 202 keepalive", [""])
+
+        # Test ipa
+        self.vty.verify("e1_line 204 keepalive", [""])
+        res = self.vty.command("write terminal")
+        self.assert_(res.find("e1_line 204 keepalive\r") > 0)
+
+        self.vty.verify("e1_line 204 keepalive 10 1 2", [""])
+        res = self.vty.command("write terminal")
+        self.assert_(res.find("e1_line 204 keepalive 10 1 2\r") > 0)
+
+        self.vty.verify("no e1_line 204 keepalive", [""])
+
+        # Check whether keep alive is disabled again on each line
+        res = self.vty.command("write terminal")
+        self.assert_(res.find("no e1_line 201 keepalive\r") > 0)
+        self.assert_(res.find("no e1_line 202 keepalive\r") > 0)
+        self.assert_(res.find("no e1_line 204 keepalive\r") > 0)
+
 class TestVTYBSC(TestVTYGenericBSC):
 
     def vty_command(self):
