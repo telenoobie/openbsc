@@ -31,6 +31,11 @@
 
 #include <sys/socket.h>
 
+#include "g711common.h"
+#include <gsm.h>
+#include <bcg729/decoder.h>
+#include <bcg729/encoder.h>
+
 #include <openbsc/debug.h>
 #include <openbsc/gsm_data.h>
 #include <openbsc/mgcp.h>
@@ -292,3 +297,319 @@ int main(int argc, char **argv)
 
 	return 0;
 }
+
+enum audio_format {
+	AF_INVALID, /* must be 0 */
+	AF_S16,
+	AF_GSM,
+	AF_G729,
+	AF_PCMA
+};
+
+struct mgcp_process_rtp_state {
+	/* decoding */
+	enum audio_format src_fmt;
+	union {
+		gsm gsm_handle;
+		bcg729DecoderChannelContextStruct *g729_dec;
+	} src;
+	size_t src_frame_size;
+	size_t src_samples_per_frame;
+
+	/* processing */
+
+	/* encoding */
+	enum audio_format dst_fmt;
+	union {
+		gsm gsm_handle;
+		bcg729EncoderChannelContextStruct *g729_enc;
+	} dst;
+	size_t dst_frame_size;
+	size_t dst_samples_per_frame;
+};
+
+static enum audio_format get_audio_format(const struct mgcp_rtp_end *rtp_end)
+{
+	switch (rtp_end->payload_type) {
+	case 3 /* GSM */:
+		return AF_GSM;
+	case 8 /* PCMA */:
+		return AF_PCMA;
+	case 18 /* G.729 */:
+		return AF_G729;
+	case 257 /* Fake S16 */:
+		return AF_S16;
+	default:
+		return AF_INVALID;
+	}
+}
+
+static void alaw_encode(short *sample, unsigned char *buf, size_t n)
+{
+	for (; n > 0; --n)
+		*(buf++) = s16_to_alaw(*(sample++));
+}
+
+static void alaw_decode(unsigned char *buf, short *sample, size_t n)
+{
+	for (; n > 0; --n)
+		*(sample++) = alaw_to_s16(*(buf++));
+}
+
+static int processing_state_destructor(struct mgcp_process_rtp_state *state)
+{
+	switch (state->src_fmt) {
+	case AF_GSM:
+		if (state->dst.gsm_handle)
+			gsm_destroy(state->src.gsm_handle);
+		break;
+	case AF_G729:
+		if (state->src.g729_dec)
+			closeBcg729DecoderChannel(state->src.g729_dec);
+		break;
+	default:
+		break;
+	}
+	switch (state->dst_fmt) {
+	case AF_GSM:
+		if (state->dst.gsm_handle)
+			gsm_destroy(state->dst.gsm_handle);
+		break;
+	case AF_G729:
+		if (state->dst.g729_enc)
+			closeBcg729EncoderChannel(state->dst.g729_enc);
+		break;
+	default:
+		break;
+	}
+	return 0;
+}
+
+int mgcp_setup_processing(struct mgcp_endpoint *endp,
+			  struct mgcp_rtp_end *dst_end,
+			  struct mgcp_rtp_end *src_end)
+{
+	struct mgcp_process_rtp_state *state = dst_end->rtp_process_data;
+	enum audio_format src_fmt, dst_fmt;
+
+	/* cleanup first */
+	if (state) {
+		talloc_free(state);
+		dst_end->rtp_process_data = NULL;
+	}
+
+	src_fmt = get_audio_format(src_end);
+	dst_fmt = get_audio_format(dst_end);
+
+	if (!src_fmt || !dst_fmt) {
+		if (src_end->payload_type == dst_end->payload_type)
+			/* Nothing to do */
+			return 0;
+
+		LOGP(DMGCP, LOGL_ERROR, "Cannot transcode: %s codec not supported.\n",
+		     src_fmt ? "destination" : "source");
+		return -EINVAL;
+	}
+
+	state = talloc_zero(dst_end, struct mgcp_process_rtp_state);
+	talloc_set_destructor(state, processing_state_destructor);
+	dst_end->rtp_process_data = state;
+
+	state->src_fmt = src_fmt;
+
+	switch (state->src_fmt) {
+	case AF_S16:
+		state->src_frame_size = 80 * sizeof(short);
+		state->src_samples_per_frame = 80;
+		break;
+	case AF_GSM:
+		state->src_frame_size = sizeof(gsm_frame);
+		state->src_samples_per_frame = 160;
+		state->src.gsm_handle = gsm_create();
+		if (!state->src.gsm_handle) {
+			LOGP(DMGCP, LOGL_ERROR,
+			     "Failed to initialize GSM decoder.\n");
+			return -EINVAL;
+		}
+		break;
+	case AF_G729:
+		state->src_frame_size = 10;
+		state->src_samples_per_frame = 80;
+		state->src.g729_dec = initBcg729DecoderChannel();
+		if (!state->src.g729_dec) {
+			LOGP(DMGCP, LOGL_ERROR,
+			     "Failed to initialize G.729 decoder.\n");
+			return -EINVAL;
+		}
+		break;
+	case AF_PCMA:
+		state->src_frame_size = 80;
+		state->src_samples_per_frame = 80;
+		break;
+	default:
+		break;
+	}
+
+	state->dst_fmt = dst_fmt;
+
+	switch (state->dst_fmt) {
+	case AF_S16:
+		state->dst_frame_size = 80*sizeof(short);
+		state->dst_samples_per_frame = 80;
+		break;
+	case AF_GSM:
+		state->dst_frame_size = sizeof(gsm_frame);
+		state->dst_samples_per_frame = 160;
+		state->dst.gsm_handle = gsm_create();
+		if (!state->dst.gsm_handle) {
+			LOGP(DMGCP, LOGL_ERROR,
+			     "Failed to initialize GSM encoder.\n");
+			return -EINVAL;
+		}
+		break;
+	case AF_G729:
+		state->dst_frame_size = 10;
+		state->dst_samples_per_frame = 80;
+		state->dst.g729_enc = initBcg729EncoderChannel();
+		if (!state->dst.g729_enc) {
+			LOGP(DMGCP, LOGL_ERROR,
+			     "Failed to initialize G.729 decoder.\n");
+			return -EINVAL;
+		}
+		break;
+	case AF_PCMA:
+		state->dst_frame_size = 80;
+		state->dst_samples_per_frame = 80;
+		break;
+	default:
+		break;
+	}
+
+	return 0;
+}
+
+int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
+			     char *data, int *len, int buf_size)
+{
+	struct mgcp_process_rtp_state *state = dst_end->rtp_process_data;
+	size_t rtp_hdr_size = 12;
+	char *payload_data = data + rtp_hdr_size;
+	int payload_len = *len - rtp_hdr_size;
+	size_t sample_cnt = 0;
+	size_t sample_idx;
+	int16_t samples[10*160];
+	uint8_t *src = (uint8_t *)payload_data;
+	uint8_t *dst = (uint8_t *)payload_data;
+	size_t nbytes = payload_len;
+	size_t frame_remainder;
+
+	if (!state)
+		return 0;
+
+	if (state->src_fmt == state->dst_fmt)
+		return 0;
+
+	/* TODO: check payload type (-> G.711 comfort noise) */
+
+	/* Decode src into samples */
+	while (nbytes >= state->src_frame_size) {
+		if (sample_cnt + state->src_samples_per_frame > ARRAY_SIZE(samples)) {
+			LOGP(DMGCP, LOGL_ERROR,
+			     "Sample buffer too small: %d > %d.\n",
+			     sample_cnt + state->src_samples_per_frame,
+			     ARRAY_SIZE(samples));
+			return -ENOSPC;
+		}
+		switch (state->src_fmt) {
+		case AF_GSM:
+			if (gsm_decode(state->src.gsm_handle,
+				       (gsm_byte *)src, samples + sample_cnt) < 0) {
+				LOGP(DMGCP, LOGL_ERROR,
+				     "Failed to decode GSM.\n");
+				return -EINVAL;
+			}
+			break;
+		case AF_G729:
+			bcg729Decoder(state->src.g729_dec, src, 0, samples + sample_cnt);
+			break;
+		case AF_PCMA:
+			alaw_decode(src, samples + sample_cnt,
+				    state->src_samples_per_frame);
+			break;
+		case AF_S16:
+			memmove(samples + sample_cnt, src,
+				state->src_frame_size);
+			break;
+		default:
+			break;
+		}
+		src        += state->src_frame_size;
+		nbytes     -= state->src_frame_size;
+		sample_cnt += state->src_samples_per_frame;
+	}
+
+	/* Add silence if necessary */
+	frame_remainder = sample_cnt % state->dst_samples_per_frame;
+	if (frame_remainder) {
+		size_t silence = state->dst_samples_per_frame - frame_remainder;
+		if (sample_cnt + silence > ARRAY_SIZE(samples)) {
+			LOGP(DMGCP, LOGL_ERROR,
+			     "Sample buffer too small for silence: %d > %d.\n",
+			     sample_cnt + silence,
+			     ARRAY_SIZE(samples));
+			return -ENOSPC;
+		}
+
+		while (silence > 0) {
+			samples[sample_cnt] = 0;
+			sample_cnt += 1;
+			silence -= 1;
+		}
+	}
+
+	/* Encode samples into dst */
+	sample_idx = 0;
+	nbytes = 0;
+	while (sample_idx + state->dst_samples_per_frame <= sample_cnt) {
+		if (nbytes + state->dst_frame_size > buf_size) {
+			LOGP(DMGCP, LOGL_ERROR,
+			     "Encoding (RTP) buffer too small: %d > %d.\n",
+			     nbytes + state->dst_frame_size, buf_size);
+			return -ENOSPC;
+		}
+		switch (state->dst_fmt) {
+		case AF_GSM:
+			gsm_encode(state->dst.gsm_handle,
+				   samples + sample_idx, dst);
+			break;
+		case AF_G729:
+			bcg729Encoder(state->dst.g729_enc,
+				      samples + sample_idx, dst);
+			break;
+		case AF_PCMA:
+			alaw_encode(samples + sample_idx, dst,
+				    state->src_samples_per_frame);
+			break;
+		case AF_S16:
+			memmove(dst, samples + sample_idx, state->dst_frame_size);
+			break;
+		default:
+			break;
+		}
+		dst        += state->dst_frame_size;
+		nbytes     += state->dst_frame_size;
+		sample_idx += state->dst_samples_per_frame;
+	}
+
+	*len = rtp_hdr_size + nbytes;
+	/* Patch payload type */
+	data[1] = (data[1] & 0x80) | (dst_end->payload_type & 0x7f);
+
+	fprintf(stderr, "sample_cnt = %d, sample_idx = %d, plen = %d -> %d, "
+		"hdr_size = %d, len = %d, pt = %d\n",
+	       sample_cnt, sample_idx, payload_len, nbytes, rtp_hdr_size, *len,
+	       data[1]);
+
+	return 0;
+}
+
