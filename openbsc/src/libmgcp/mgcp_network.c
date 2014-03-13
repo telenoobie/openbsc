@@ -77,6 +77,7 @@ struct rtp_hdr {
 #define RTP_SEQ_MOD		(1 << 16)
 #define RTP_MAX_DROPOUT		3000
 #define RTP_MAX_MISORDER	100
+#define RTP_BUF_SIZE		4096
 
 
 enum {
@@ -347,6 +348,18 @@ static int align_rtp_timestamp_offset(struct mgcp_endpoint *endp,
 	return timestamp_error;
 }
 
+int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
+			     char *data, int *len, int buf_size)
+{
+	return 0;
+}
+
+int mgcp_setup_processing(struct mgcp_endpoint *endp,
+			  struct mgcp_rtp_end *dst_end,
+			  struct mgcp_rtp_end *src_end)
+{
+	return 0;
+}
 
 /**
  * The RFC 3550 Appendix A assumes there are multiple sources but
@@ -597,6 +610,7 @@ static int mgcp_send(struct mgcp_endpoint *endp, int dest, int is_rtp,
 		rtp_end->dropped_packets += 1;
 	else if (is_rtp) {
 		mgcp_patch_and_count(endp, rtp_state, rtp_end, addr, buf, rc);
+		mgcp_process_rtp_payload(rtp_end, buf, &rc, RTP_BUF_SIZE);
 		forward_data(rtp_end->rtp.fd, &endp->taps[tap_idx], buf, rc);
 		return mgcp_udp_send(rtp_end->rtp.fd,
 				     &rtp_end->addr,
@@ -635,7 +649,7 @@ static int receive_from(struct mgcp_endpoint *endp, int fd, struct sockaddr_in *
 
 static int rtp_data_net(struct osmo_fd *fd, unsigned int what)
 {
-	char buf[4096];
+	char buf[RTP_BUF_SIZE];
 	struct sockaddr_in addr;
 	struct mgcp_endpoint *endp;
 	int rc, proto;
@@ -719,7 +733,7 @@ static void discover_bts(struct mgcp_endpoint *endp, int proto, struct sockaddr_
 
 static int rtp_data_bts(struct osmo_fd *fd, unsigned int what)
 {
-	char buf[4096];
+	char buf[RTP_BUF_SIZE];
 	struct sockaddr_in addr;
 	struct mgcp_endpoint *endp;
 	int rc, proto;
@@ -781,7 +795,7 @@ static int rtp_data_bts(struct osmo_fd *fd, unsigned int what)
 static int rtp_data_transcoder(struct mgcp_rtp_end *end, struct mgcp_endpoint *_endp,
 			      int dest, struct osmo_fd *fd)
 {
-	char buf[4096];
+	char buf[RTP_BUF_SIZE];
 	struct sockaddr_in addr;
 	struct mgcp_config *cfg;
 	int rc, proto;
