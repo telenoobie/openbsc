@@ -91,6 +91,7 @@ struct mgcp_rtp_end {
 	/* RTP patching */
 	int force_constant_ssrc; /* -1: always, 0: don't, 1: once */
 	int force_aligned_timing;
+	void *rtp_process_data;
 
 	/*
 	 * Each end has a socket...
@@ -197,5 +198,14 @@ void mgcp_state_calc_loss(struct mgcp_rtp_state *s, struct mgcp_rtp_end *,
 			uint32_t *expected, int *loss);
 uint32_t mgcp_state_calc_jitter(struct mgcp_rtp_state *);
 
+/* payload processing hook */
+int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
+			     char *data, int *len, int buf_size)
+	__attribute__((weak));
+
+int mgcp_setup_processing(struct mgcp_endpoint *endp,
+			  struct mgcp_rtp_end *dst_end,
+			  struct mgcp_rtp_end *src_end)
+	__attribute__((weak));
 
 #endif
