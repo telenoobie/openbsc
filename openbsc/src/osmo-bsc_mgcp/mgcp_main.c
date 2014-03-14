@@ -301,6 +301,7 @@ int main(int argc, char **argv)
 enum audio_format {
 	AF_INVALID, /* must be 0 */
 	AF_S16,
+	AF_L16,
 	AF_GSM,
 	AF_G729,
 	AF_PCMA
@@ -337,11 +338,33 @@ static enum audio_format get_audio_format(const struct mgcp_rtp_end *rtp_end)
 		return AF_PCMA;
 	case 18 /* G.729 */:
 		return AF_G729;
+	case 11 /* L16 */:
+		return AF_L16;
 	case 257 /* Fake S16 */:
 		return AF_S16;
+	case 96 ... 127:
+		if (!rtp_end->fmtp_extra)
+			return AF_INVALID;
+		if (strstr(rtp_end->fmtp_extra, " L16/"))
+			return AF_L16;
+		return AF_INVALID;
 	default:
 		return AF_INVALID;
 	}
+}
+
+static void l16_encode(short *sample, unsigned char *buf, size_t n)
+{
+	for (; n > 0; --n, ++sample, buf += 2) {
+		buf[0] = sample[0] >> 8;
+		buf[1] = sample[0] & 0xff;
+	}
+}
+
+static void l16_decode(unsigned char *buf, short *sample, size_t n)
+{
+	for (; n > 0; --n, ++sample, buf += 2)
+		sample[0] = ((short)buf[0] << 8) | buf[1];
 }
 
 static void alaw_encode(short *sample, unsigned char *buf, size_t n)
@@ -398,6 +421,9 @@ int mgcp_setup_processing(struct mgcp_endpoint *endp,
 		dst_end->rtp_process_data = NULL;
 	}
 
+	if (!src_end)
+		return 0;
+
 	src_fmt = get_audio_format(src_end);
 	dst_fmt = get_audio_format(dst_end);
 
@@ -411,13 +437,21 @@ int mgcp_setup_processing(struct mgcp_endpoint *endp,
 		return -EINVAL;
 	}
 
-	state = talloc_zero(dst_end, struct mgcp_process_rtp_state);
+	if (src_end->rate && dst_end->rate && src_end->rate != dst_end->rate) {
+		LOGP(DMGCP, LOGL_ERROR,
+		     "Cannot transcode: rate conversion (%d -> %d) not supported.\n",
+		     src_end->rate, dst_end->rate);
+		return -EINVAL;
+	}
+
+	state = talloc_zero(NULL, struct mgcp_process_rtp_state);
 	talloc_set_destructor(state, processing_state_destructor);
 	dst_end->rtp_process_data = state;
 
 	state->src_fmt = src_fmt;
 
 	switch (state->src_fmt) {
+	case AF_L16:
 	case AF_S16:
 		state->src_frame_size = 80 * sizeof(short);
 		state->src_samples_per_frame = 80;
@@ -453,6 +487,7 @@ int mgcp_setup_processing(struct mgcp_endpoint *endp,
 	state->dst_fmt = dst_fmt;
 
 	switch (state->dst_fmt) {
+	case AF_L16:
 	case AF_S16:
 		state->dst_frame_size = 80*sizeof(short);
 		state->dst_samples_per_frame = 80;
@@ -485,8 +520,34 @@ int mgcp_setup_processing(struct mgcp_endpoint *endp,
 		break;
 	}
 
+	LOGP(DMGCP, LOGL_INFO,
+	     "Initialized RTP processing on: 0x%x "
+	     "conv: %d (%d, %d, %s) -> %d (%d, %d, %s)\n",
+	     ENDPOINT_NUMBER(endp),
+	     src_fmt, src_end->payload_type, src_end->rate, src_end->fmtp_extra,
+	     dst_fmt, dst_end->payload_type, dst_end->rate, dst_end->fmtp_extra);
+
 	return 0;
 }
+
+void mgcp_net_downlink_format(struct mgcp_endpoint *endp,
+			      int *payload_type,
+			      const char**audio_name,
+			      const char**fmtp_extra)
+{
+	struct mgcp_process_rtp_state *state = endp->net_end.rtp_process_data;
+	if (0 && !state) {
+		*payload_type = endp->bts_end.payload_type;
+		*audio_name = endp->bts_end.audio_name;
+		*fmtp_extra = endp->bts_end.fmtp_extra;
+		return;
+	}
+
+	*payload_type = endp->net_end.payload_type;
+	*fmtp_extra = endp->net_end.fmtp_extra;
+	*audio_name = endp->net_end.audio_name;
+}
+
 
 int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
 			     char *data, int *len, int buf_size)
@@ -539,6 +600,10 @@ int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
 		case AF_S16:
 			memmove(samples + sample_cnt, src,
 				state->src_frame_size);
+			break;
+		case AF_L16:
+			l16_decode(src, samples + sample_cnt,
+				   state->src_samples_per_frame);
 			break;
 		default:
 			break;
@@ -593,6 +658,10 @@ int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
 		case AF_S16:
 			memmove(dst, samples + sample_idx, state->dst_frame_size);
 			break;
+		case AF_L16:
+			l16_encode(samples + sample_idx, dst,
+				   state->src_samples_per_frame);
+			break;
 		default:
 			break;
 		}
@@ -605,10 +674,12 @@ int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
 	/* Patch payload type */
 	data[1] = (data[1] & 0x80) | (dst_end->payload_type & 0x7f);
 
+	/* TODO: remove me
 	fprintf(stderr, "sample_cnt = %d, sample_idx = %d, plen = %d -> %d, "
 		"hdr_size = %d, len = %d, pt = %d\n",
 	       sample_cnt, sample_idx, payload_len, nbytes, rtp_hdr_size, *len,
 	       data[1]);
+	       */
 
 	return 0;
 }
