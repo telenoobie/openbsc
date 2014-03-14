@@ -331,6 +331,17 @@ struct mgcp_process_rtp_state {
 
 static enum audio_format get_audio_format(const struct mgcp_rtp_end *rtp_end)
 {
+	if (rtp_end->subtype_name) {
+		if (!strcmp("GSM", rtp_end->subtype_name))
+			return AF_GSM;
+		if (!strcmp("PCMA", rtp_end->subtype_name))
+			return AF_PCMA;
+		if (!strcmp("G729", rtp_end->subtype_name))
+			return AF_G729;
+		if (!strcmp("L16", rtp_end->subtype_name))
+			return AF_L16;
+	}
+
 	switch (rtp_end->payload_type) {
 	case 3 /* GSM */:
 		return AF_GSM;
@@ -340,14 +351,6 @@ static enum audio_format get_audio_format(const struct mgcp_rtp_end *rtp_end)
 		return AF_G729;
 	case 11 /* L16 */:
 		return AF_L16;
-	case 257 /* Fake S16 */:
-		return AF_S16;
-	case 96 ... 127:
-		if (!rtp_end->fmtp_extra)
-			return AF_INVALID;
-		if (strstr(rtp_end->fmtp_extra, " L16/"))
-			return AF_L16;
-		return AF_INVALID;
 	default:
 		return AF_INVALID;
 	}
