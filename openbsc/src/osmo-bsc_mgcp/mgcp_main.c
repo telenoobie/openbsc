@@ -539,7 +539,7 @@ void mgcp_net_downlink_format(struct mgcp_endpoint *endp,
 			      const char**fmtp_extra)
 {
 	struct mgcp_process_rtp_state *state = endp->net_end.rtp_process_data;
-	if (0 && !state) {
+	if (!state || endp->net_end.payload_type < 0) {
 		*payload_type = endp->bts_end.payload_type;
 		*audio_name = endp->bts_end.audio_name;
 		*fmtp_extra = endp->bts_end.fmtp_extra;
