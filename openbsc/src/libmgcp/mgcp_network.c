@@ -361,6 +361,16 @@ int mgcp_setup_processing(struct mgcp_endpoint *endp,
 	return 0;
 }
 
+void mgcp_net_downlink_format(struct mgcp_endpoint *endp,
+			      int *payload_type,
+			      const char**audio_name,
+			      const char**fmtp_extra)
+{
+	*payload_type = endp->bts_end.payload_type;
+	*audio_name = endp->bts_end.audio_name;
+	*fmtp_extra = endp->bts_end.fmtp_extra;
+}
+
 /**
  * The RFC 3550 Appendix A assumes there are multiple sources but
  * some of the supported endpoints (e.g. the nanoBTS) can only handle

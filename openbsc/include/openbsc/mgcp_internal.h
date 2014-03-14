@@ -81,11 +81,14 @@ struct mgcp_rtp_end {
 	/* per endpoint data */
 	int payload_type;
 	uint32_t rate;
+	int channels;
 	uint32_t frame_duration_num;
 	uint32_t frame_duration_den;
 	int  frames_per_packet;
 	uint32_t packet_duration_ms;
 	char *fmtp_extra;
+	char *audio_name;
+	char *subtype_name;
 	int output_enabled;
 
 	/* RTP patching */
@@ -206,6 +209,12 @@ int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
 int mgcp_setup_processing(struct mgcp_endpoint *endp,
 			  struct mgcp_rtp_end *dst_end,
 			  struct mgcp_rtp_end *src_end)
+	__attribute__((weak));
+
+void mgcp_net_downlink_format(struct mgcp_endpoint *endp,
+			      int *payload_type,
+			      const char**subtype_name,
+			      const char**fmtp_extra)
 	__attribute__((weak));
 
 #endif
