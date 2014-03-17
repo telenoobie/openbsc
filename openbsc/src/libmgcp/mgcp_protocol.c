@@ -918,6 +918,9 @@ mgcp_header_done:
 	if (have_sdp) {
 		parse_sdp_data(&endp->net_end, p);
 		setup_processing(endp);
+
+		endp->bts_end.rtp_port = endp->net_end.rtp_port;
+		endp->bts_end.addr = endp->net_end.addr;
 	}
 
 	/* policy CB */

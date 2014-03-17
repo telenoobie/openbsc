@@ -327,6 +327,12 @@ struct mgcp_process_rtp_state {
 	} dst;
 	size_t dst_frame_size;
 	size_t dst_samples_per_frame;
+
+	int second_packet;
+	int ptime_different;
+	uint16_t next_seq;
+	int16_t samples[10*160];
+	size_t sample_cnt;
 };
 
 static enum audio_format get_audio_format(const struct mgcp_rtp_end *rtp_end)
@@ -559,9 +565,7 @@ int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
 	size_t rtp_hdr_size = 12;
 	char *payload_data = data + rtp_hdr_size;
 	int payload_len = *len - rtp_hdr_size;
-	size_t sample_cnt = 0;
 	size_t sample_idx;
-	int16_t samples[10*160];
 	uint8_t *src = (uint8_t *)payload_data;
 	uint8_t *dst = (uint8_t *)payload_data;
 	size_t nbytes = payload_len;
@@ -577,35 +581,35 @@ int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
 
 	/* Decode src into samples */
 	while (nbytes >= state->src_frame_size) {
-		if (sample_cnt + state->src_samples_per_frame > ARRAY_SIZE(samples)) {
+		if (state->sample_cnt + state->src_samples_per_frame > ARRAY_SIZE(state->samples)) {
 			LOGP(DMGCP, LOGL_ERROR,
 			     "Sample buffer too small: %d > %d.\n",
-			     sample_cnt + state->src_samples_per_frame,
-			     ARRAY_SIZE(samples));
+			     state->sample_cnt + state->src_samples_per_frame,
+			     ARRAY_SIZE(state->samples));
 			return -ENOSPC;
 		}
 		switch (state->src_fmt) {
 		case AF_GSM:
 			if (gsm_decode(state->src.gsm_handle,
-				       (gsm_byte *)src, samples + sample_cnt) < 0) {
+				       (gsm_byte *)src, state->samples + state->sample_cnt) < 0) {
 				LOGP(DMGCP, LOGL_ERROR,
 				     "Failed to decode GSM.\n");
 				return -EINVAL;
 			}
 			break;
 		case AF_G729:
-			bcg729Decoder(state->src.g729_dec, src, 0, samples + sample_cnt);
+			bcg729Decoder(state->src.g729_dec, src, 0, state->samples + state->sample_cnt);
 			break;
 		case AF_PCMA:
-			alaw_decode(src, samples + sample_cnt,
+			alaw_decode(src, state->samples + state->sample_cnt,
 				    state->src_samples_per_frame);
 			break;
 		case AF_S16:
-			memmove(samples + sample_cnt, src,
+			memmove(state->samples + state->sample_cnt, src,
 				state->src_frame_size);
 			break;
 		case AF_L16:
-			l16_decode(src, samples + sample_cnt,
+			l16_decode(src, state->samples + state->sample_cnt,
 				   state->src_samples_per_frame);
 			break;
 		default:
@@ -613,13 +617,16 @@ int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
 		}
 		src        += state->src_frame_size;
 		nbytes     -= state->src_frame_size;
-		sample_cnt += state->src_samples_per_frame;
+		state->sample_cnt += state->src_samples_per_frame;
 	}
 
 	/* Add silence if necessary */
-	frame_remainder = sample_cnt % state->dst_samples_per_frame;
+	/* sigh...this equipment doesn't honor the ptime... */
+	frame_remainder = state->sample_cnt % state->dst_samples_per_frame;
 	if (frame_remainder) {
+#if 0
 		size_t silence = state->dst_samples_per_frame - frame_remainder;
+		printf("Adding silence: %zu\n", silence);
 		if (sample_cnt + silence > ARRAY_SIZE(samples)) {
 			LOGP(DMGCP, LOGL_ERROR,
 			     "Sample buffer too small for silence: %d > %d.\n",
@@ -633,12 +640,27 @@ int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
 			sample_cnt += 1;
 			silence -= 1;
 		}
+#else
+		size_t samples = state->dst_samples_per_frame - frame_remainder;
+		LOGP(DMGCP, LOGL_NOTICE, "Waiting for... %zu\n", samples);
+
+		/* remember... */
+		if (!state->second_packet) {
+			memcpy(&state->next_seq, &data[2], 2);
+			state->ptime_different = 1;
+		}
+		state->second_packet = 1;
+
+		return -1;
+#endif
 	}
+
+	state->second_packet = 1;
 
 	/* Encode samples into dst */
 	sample_idx = 0;
 	nbytes = 0;
-	while (sample_idx + state->dst_samples_per_frame <= sample_cnt) {
+	while (sample_idx + state->dst_samples_per_frame <= state->sample_cnt) {
 		if (nbytes + state->dst_frame_size > buf_size) {
 			LOGP(DMGCP, LOGL_ERROR,
 			     "Encoding (RTP) buffer too small: %d > %d.\n",
@@ -648,21 +670,21 @@ int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
 		switch (state->dst_fmt) {
 		case AF_GSM:
 			gsm_encode(state->dst.gsm_handle,
-				   samples + sample_idx, dst);
+				   state->samples + sample_idx, dst);
 			break;
 		case AF_G729:
 			bcg729Encoder(state->dst.g729_enc,
-				      samples + sample_idx, dst);
+				      state->samples + sample_idx, dst);
 			break;
 		case AF_PCMA:
-			alaw_encode(samples + sample_idx, dst,
+			alaw_encode(state->samples + sample_idx, dst,
 				    state->src_samples_per_frame);
 			break;
 		case AF_S16:
-			memmove(dst, samples + sample_idx, state->dst_frame_size);
+			memmove(dst, state->samples + sample_idx, state->dst_frame_size);
 			break;
 		case AF_L16:
-			l16_encode(samples + sample_idx, dst,
+			l16_encode(state->samples + sample_idx, dst,
 				   state->src_samples_per_frame);
 			break;
 		default:
@@ -673,9 +695,14 @@ int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
 		sample_idx += state->dst_samples_per_frame;
 	}
 
+	state->sample_cnt = 0;
 	*len = rtp_hdr_size + nbytes;
 	/* Patch payload type */
 	data[1] = (data[1] & 0x80) | (dst_end->payload_type & 0x7f);
+	if (state->ptime_different) {
+		memcpy(&data[2], &state->next_seq, 2);
+		state->next_seq = htons(ntohs(state->next_seq) + 1);
+	}
 
 	/* TODO: remove me
 	fprintf(stderr, "sample_cnt = %d, sample_idx = %d, plen = %d -> %d, "

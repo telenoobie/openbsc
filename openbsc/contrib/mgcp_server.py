@@ -4,11 +4,11 @@
 import socket, time
 
 MGCP_GATEWAY_PORT = 2427
-MGCP_CALLAGENT_PORT = 2727
+MGCP_CALLAGENT_PORT = 2728
 
 rsip_resp = """200 321321332\r\n"""
 audit_packet = """AUEP %d 13@mgw MGCP 1.0\r\n"""
-crcx_packet = """CRCX %d 14@mgw MGCP 1.0\r\nC: 4a84ad5d25f\r\nL: p:20, a:GSM-EFR, nt:IN\r\nM: recvonly\r\n"""
+crcx_packet = """CRCX %d 14@mgw MGCP 1.0\r\nC: 4a84ad5d25f\r\nL: p:20, a:GSM-EFR, nt:IN\r\nM: recvonly\r\n\r\nv=0\r\no=MxSIP 0 0 IN IP4 192.168.0.1\r\ns=SIP Call\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 8 101\r\na=rtpmap:8 PCMA/8000/1\r\na=rtpmap:101 telephone-event/8000\r\na=silenceSupp:off - - - -\r\na=fmtp:101 0-15\r\na=sendrecv\r\n"""
 dlcx_packet = """DLCX %d 14@mgw MGCP 1.0\r\nC: 4a84ad5d25f\r\nI: %d\r\n"""
 mdcx_packet = """MDCX %d 14@mgw MGCP 1.0\r\nC: 4a84ad5d25f\r\nI: %d\r\nL: p:20, a:GSM-EFR, nt:IN\r\nM: recvonly\r\n\r\nv=0\r\no=- 258696477 0 IN IP4 172.16.1.107\r\ns=-\r\nc=IN IP4 172.16.1.107\r\nt=0 0\r\nm=audio 6666 RTP/AVP 127\r\na=rtpmap:127 GSM-EFR/8000/1\r\na=ptime:20\r\na=recvonly\r\nm=image 4402 udptl t38\r\na=T38FaxVersion:0\r\na=T38MaxBitRate:14400\r\n"""
 
@@ -51,10 +51,13 @@ def generate_tid():
 
 
 
-while True:
-    send_and_receive(audit_packet % generate_tid())
-    send_and_receive(crcx_packet % generate_tid() )
-    send_and_receive(mdcx_packet % (generate_tid(), last_ci))
-    send_and_receive(dlcx_packet % (generate_tid(), last_ci))
+#while True:
+#    send_and_receive(audit_packet % generate_tid())
+#    send_and_receive(crcx_packet % generate_tid() )
+#    send_and_receive(mdcx_packet % (generate_tid(), last_ci))
+#    send_and_receive(dlcx_packet % (generate_tid(), last_ci))
 
-    time.sleep(3)
+#    time.sleep(3)
+
+
+send_and_receive(crcx_packet % generate_tid() )

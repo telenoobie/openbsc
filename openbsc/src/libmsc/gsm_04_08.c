@@ -3294,7 +3294,7 @@ int gsm0408_new_conn(struct gsm_subscriber_connection *conn)
 
 	conn->anch_operation->timeout.data = conn;
 	conn->anch_operation->timeout.cb = anchor_timeout;
-	osmo_timer_schedule(&conn->anch_operation->timeout, 5, 0);
+	osmo_timer_schedule(&conn->anch_operation->timeout, 8, 0);
 	return 0;
 }
 
