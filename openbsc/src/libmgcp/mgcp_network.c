@@ -348,7 +348,8 @@ static int align_rtp_timestamp_offset(struct mgcp_endpoint *endp,
 	return timestamp_error;
 }
 
-int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
+int mgcp_process_rtp_payload(struct mgcp_endpoint *endp,
+				struct mgcp_rtp_end *dst_end,
 			     char *data, int *len, int buf_size)
 {
 	return 0;
@@ -590,6 +591,15 @@ static int mgcp_send_transcoder(struct mgcp_rtp_end *end,
 	return rc;
 }
 
+int mgcp_do_send(struct mgcp_endpoint *endp, struct mgcp_rtp_end *rtp_end,
+		char *buf, int len)
+{
+	forward_data(rtp_end->rtp.fd, &endp->taps[MGCP_TAP_NET_OUT], buf, len);
+	return mgcp_udp_send(rtp_end->rtp.fd,
+			     &rtp_end->addr,
+			     rtp_end->rtp_port, buf, len);
+}
+
 static int mgcp_send(struct mgcp_endpoint *endp, int dest, int is_rtp,
 		     struct sockaddr_in *addr, char *buf, int rc)
 {
@@ -620,8 +630,8 @@ static int mgcp_send(struct mgcp_endpoint *endp, int dest, int is_rtp,
 		rtp_end->dropped_packets += 1;
 	else if (is_rtp) {
 		mgcp_patch_and_count(endp, rtp_state, rtp_end, addr, buf, rc);
-		if (mgcp_process_rtp_payload(rtp_end, buf, &rc, RTP_BUF_SIZE) != 0)
-			return;
+		if (mgcp_process_rtp_payload(endp, rtp_end, buf, &rc, RTP_BUF_SIZE) != 0)
+			return 0;
 		forward_data(rtp_end->rtp.fd, &endp->taps[tap_idx], buf, rc);
 		return mgcp_udp_send(rtp_end->rtp.fd,
 				     &rtp_end->addr,

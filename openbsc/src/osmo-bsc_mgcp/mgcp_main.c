@@ -558,7 +558,8 @@ void mgcp_net_downlink_format(struct mgcp_endpoint *endp,
 }
 
 
-int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
+int mgcp_process_rtp_payload(struct mgcp_endpoint *endp,
+				struct mgcp_rtp_end *dst_end,
 			     char *data, int *len, int buf_size)
 {
 	struct mgcp_process_rtp_state *state = dst_end->rtp_process_data;
@@ -570,6 +571,7 @@ int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
 	uint8_t *dst = (uint8_t *)payload_data;
 	size_t nbytes = payload_len;
 	size_t frame_remainder;
+	uint32_t ts_no;
 
 	if (!state)
 		return 0;
@@ -655,7 +657,17 @@ int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
 #endif
 	}
 
+	/* G729 sends us ptime=40 */
+	if (state->sample_cnt == 2 * state->dst_samples_per_frame) {
+		if (!state->second_packet) {
+			printf("TOO MUCH data in one packet?\n");
+			memcpy(&state->next_seq, &data[2], 2);
+			state->ptime_different = 1;
+		}
+	}
+
 	state->second_packet = 1;
+	memcpy(&ts_no, &data[4], 4);
 
 	/* Encode samples into dst */
 	sample_idx = 0;
@@ -690,19 +702,23 @@ int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
 		default:
 			break;
 		}
-		dst        += state->dst_frame_size;
+		//dst        += state->dst_frame_size;
 		nbytes     += state->dst_frame_size;
 		sample_idx += state->dst_samples_per_frame;
+
+		*len = rtp_hdr_size + state->dst_frame_size;
+		/* Patch payload type */
+		data[1] = (data[1] & 0x80) | (dst_end->payload_type & 0x7f);
+		if (state->ptime_different) {
+			memcpy(&data[2], &state->next_seq, 2);
+			memcpy(&data[4], &ts_no, 4);
+			state->next_seq = htons(ntohs(state->next_seq) + 1);
+			ts_no = htonl(ntohl(ts_no) + state->dst_samples_per_frame);
+		}
+		mgcp_do_send(endp, dst_end, (char *)dst, *len);
 	}
 
 	state->sample_cnt = 0;
-	*len = rtp_hdr_size + nbytes;
-	/* Patch payload type */
-	data[1] = (data[1] & 0x80) | (dst_end->payload_type & 0x7f);
-	if (state->ptime_different) {
-		memcpy(&data[2], &state->next_seq, 2);
-		state->next_seq = htons(ntohs(state->next_seq) + 1);
-	}
 
 	/* TODO: remove me
 	fprintf(stderr, "sample_cnt = %d, sample_idx = %d, plen = %d -> %d, "
@@ -711,6 +727,6 @@ int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
 	       data[1]);
 	       */
 
-	return 0;
+	return -1;
 }
 

@@ -202,7 +202,7 @@ void mgcp_state_calc_loss(struct mgcp_rtp_state *s, struct mgcp_rtp_end *,
 uint32_t mgcp_state_calc_jitter(struct mgcp_rtp_state *);
 
 /* payload processing hook */
-int mgcp_process_rtp_payload(struct mgcp_rtp_end *dst_end,
+int mgcp_process_rtp_payload(struct mgcp_endpoint *endp, struct mgcp_rtp_end *dst_end,
 			     char *data, int *len, int buf_size)
 	__attribute__((weak));
 
@@ -216,5 +216,8 @@ void mgcp_net_downlink_format(struct mgcp_endpoint *endp,
 			      const char**subtype_name,
 			      const char**fmtp_extra)
 	__attribute__((weak));
+
+int mgcp_do_send(struct mgcp_endpoint *endp, struct mgcp_rtp_end *rtp_end,
+		char *buf, int len);
 
 #endif
