@@ -715,7 +715,7 @@ int mgcp_process_rtp_payload(struct mgcp_endpoint *endp,
 			state->next_seq = htons(ntohs(state->next_seq) + 1);
 			ts_no = htonl(ntohl(ts_no) + state->dst_samples_per_frame);
 		}
-		mgcp_do_send(endp, dst_end, (char *)dst, *len);
+		mgcp_do_send(endp, dst_end, data, *len);
 	}
 
 	state->sample_cnt = 0;
