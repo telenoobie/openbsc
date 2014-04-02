@@ -1,4 +1,4 @@
-SUBDIRS = gsm0408 db channel mgcp gprs si abis
+SUBDIRS = gsm0408 db mgcp gprs si abis
 
 if BUILD_NAT
 SUBDIRS += bsc-nat
