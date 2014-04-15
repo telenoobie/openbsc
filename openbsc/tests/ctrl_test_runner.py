@@ -319,6 +319,58 @@ class TestCtrlNITB(TestCtrlBase):
     def ctrl_app(self):
         return (4249, "./src/osmo-nitb/osmo-nitb", "OsmoBSC", "nitb")
 
+    def testAuthPolicy(self):
+        policies = ['token', 'closed', 'accept-all']
+
+        for policy in policies:
+            r = self.do_set('auth-policy', policy)
+            self.assertEquals(r['mtype'], 'SET_REPLY')
+            self.assertEquals(r['var'], 'auth-policy')
+            self.assertEquals(r['value'], policy)
+
+            r = self.do_get('auth-policy')
+            self.assertEquals(r['mtype'], 'GET_REPLY')
+            self.assertEquals(r['var'], 'auth-policy')
+            self.assertEquals(r['value'], policy)
+
+        r = self.do_set('auth-policy', 'qwerty')
+        self.assertEquals(r['mtype'], 'ERROR')
+        self.assertEquals(r['error'], 'Value failed verification.')
+
+    def testBtsBand(self):
+        bands = ['GSM450', 'GSM480', 'GSM750', 'GSM810',
+                 'GSM850', 'GSM900', 'DCS1800', 'PCS1900']
+
+        for band in bands:
+            r = self.do_set('bts.0.band', band)
+            self.assertEquals(r['mtype'], 'SET_REPLY')
+            self.assertEquals(r['var'], 'bts.0.band')
+            self.assertEquals(r['value'], band)
+
+            r = self.do_get('bts.0.band')
+            self.assertEquals(r['mtype'], 'GET_REPLY')
+            self.assertEquals(r['var'], 'bts.0.band')
+            self.assertEquals(r['value'], band)
+
+        r = self.do_set('bts.0.band', 'qwerty')
+        self.assertEquals(r['mtype'], 'ERROR')
+        self.assertEquals(r['error'], 'Value failed verification.')
+
+    def testTrxArfcn(self):
+        r = self.do_set('bts.0.trx.0.arfcn', '51')
+        self.assertEquals(r['mtype'], 'SET_REPLY')
+        self.assertEquals(r['var'], 'bts.0.trx.0.arfcn')
+        self.assertEquals(r['value'], '51')
+        
+        r = self.do_get('bts.0.trx.0.arfcn')
+        self.assertEquals(r['mtype'], 'GET_REPLY')
+        self.assertEquals(r['var'], 'bts.0.trx.0.arfcn')
+        self.assertEquals(r['value'], '51')
+        
+        r = self.do_set('bts.0.trx.0.arfcn', '3000')
+        self.assertEquals(r['mtype'], 'ERROR')
+        self.assertEquals(r['error'], 'Input not within the range')
+
     def testSubscriberAddRemove(self):
         r = self.do_set('subscriber-modify-v1', '2620345,445566')
         self.assertEquals(r['mtype'], 'SET_REPLY')
@@ -347,6 +399,21 @@ class TestCtrlNITB(TestCtrlBase):
         self.assertEquals(r['mtype'], 'GET_REPLY')
         self.assertEquals(r['var'], 'subscriber-list-active-v1')
         self.assertEquals(r['value'], None)
+
+    def testSmsQueueMaxFailure(self):
+        r = self.do_get('sms-queue-max-failure')
+        self.assertEquals(r['mtype'], 'GET_REPLY')
+        self.assertEquals(r['var'], 'sms-queue-max-failure')
+        self.assertEquals(r['value'], '1')
+
+        r = self.do_set('sms-queue-max-failure', '5')
+        self.assertEquals(r['mtype'], 'SET_REPLY')
+        self.assertEquals(r['var'], 'sms-queue-max-failure')
+        self.assertEquals(r['value'], '5')
+
+        r = self.do_set('sms-queue-max-failure', '555')
+        self.assertEquals(r['mtype'], 'ERROR')
+        self.assertEquals(r['error'], 'Value must be between 1 and 500')
 
 class TestCtrlNAT(TestCtrlBase):
 
