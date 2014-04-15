@@ -480,7 +480,7 @@ static int deliver_to_esme(struct osmo_esme *esme, struct gsm_sms *sms,
 		deliver.source_addr_npi = NPI_ISDN_E163_E164;
 		snprintf((char *)deliver.source_addr,
 			 sizeof(deliver.source_addr), "%s",
-			 strlen(sms->sender->external_number)?sms->sender->external_number:sms->sender->extension);
+			 strlen(conn->subscr->external_number)?conn->subscr->external_number:conn->subscr->extension);
 	}
 
 	deliver.dest_addr_ton	= sms->dst.ton;
