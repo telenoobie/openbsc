@@ -411,6 +411,9 @@ static int gsm340_rx_tpdu(struct gsm_subscriber_connection *conn, struct msgb *m
 		}
 	}
 
+	struct gsm_subscriber *sender = conn->subscr;
+	strncpy(gsms->src.addr, (char *)sender->extension, sizeof(gsms->src.addr)-1);
+
 	LOGP(DLSMS, LOGL_INFO, "RX SMS: Sender: %s, MTI: 0x%02x, VPF: 0x%02x, "
 	     "MR: 0x%02x PID: 0x%02x, DCS: 0x%02x, DA: %s, "
 	     "UserDataLength: 0x%02x, UserData: \"%s\"\n",
