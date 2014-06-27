@@ -237,6 +237,7 @@ static int transcode_test(const char *srcfmt, const char *dstfmt,
 			printf("\n");
 		} while (nchars - prefix >= cutlen);
 	}
+	printf("counted: %d\n", cont);
 	talloc_free(ctx);
 	return 0;
 }
@@ -245,6 +246,7 @@ static void test_rtp_seq_state(void)
 {
 	char buf[4096];
 	int len;
+	int cont;
 	void *ctx;
 	struct mgcp_endpoint *endp;
 	struct mgcp_process_rtp_state *state;
@@ -261,7 +263,8 @@ static void test_rtp_seq_state(void)
 	/* initialize packet */
 	len = audio_packets_pcma[0].len;
 	memcpy(buf, audio_packets_pcma[0].data, len);
-	mgcp_transcoding_process_rtp(endp, &endp->bts_end, buf, &len, len);
+	cont = mgcp_transcoding_process_rtp(endp, &endp->bts_end, buf, &len, len);
+	OSMO_ASSERT(cont >= 0);
 	OSMO_ASSERT(state->is_running);
 	OSMO_ASSERT(state->next_seq == 2);
 	OSMO_ASSERT(state->next_time = 240);
@@ -278,7 +281,8 @@ static void test_rtp_seq_state(void)
 	state->next_seq = 1234;
 	len = audio_packets_pcma[0].len;
 	memcpy(buf, audio_packets_pcma[0].data, len);
-	mgcp_transcoding_process_rtp(endp, &endp->bts_end, buf, &len, len);
+	cont = mgcp_transcoding_process_rtp(endp, &endp->bts_end, buf, &len, len);
+	OSMO_ASSERT(cont >= 0);
 	OSMO_ASSERT(len == audio_packets_pcma[0].len);
 	hdr = (struct rtp_hdr *) &buf[0];
 
@@ -355,8 +359,8 @@ static int test_repacking(int in_samples, int out_samples, int no_transcode)
 
 			len -= 12; /* ignore RTP header */
 
-			printf("got %d %s output frames (%d octets)\n",
-			       len / out_size, dstfmt, len);
+			printf("got %d %s output frames (%d octets) count=%d\n",
+			       len / out_size, dstfmt, len, cont);
 
 			len = cont;
 		} while (len > 0);
