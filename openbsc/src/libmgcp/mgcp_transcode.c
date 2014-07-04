@@ -451,6 +451,7 @@ int mgcp_transcoding_process_rtp(struct mgcp_endpoint *endp,
 					ENDPOINT_NUMBER(endp), delta, state->sample_cnt);
 				state->sample_cnt = 0;
 				state->sample_offs = 0;
+				state->next_time = ts_no;
 			} else if (delta < 0) {
 				LOGP(DMGCP, LOGL_NOTICE,
 				     "RTP time jumps backwards, delta = %d, "
