@@ -75,7 +75,7 @@ static const struct rate_ctr_group_desc global_ctrg_desc = {
 static int gbprox_relay2peer(struct msgb *old_msg, struct gbproxy_peer *peer,
 			  uint16_t ns_bvci);
 static int gbprox_relay2sgsn(struct gbproxy_config *cfg, struct msgb *old_msg,
-			     struct gbproxy_peer *peer, uint16_t ns_bvci);
+			     uint16_t ns_bvci, uint16_t sgsn_nsei);
 
 static int check_peer_nsei(struct gbproxy_peer *peer, uint16_t nsei)
 {
@@ -359,8 +359,8 @@ static int gbprox_process_bssgp_ul(struct gbproxy_config *cfg,
 			gbproxy_update_tlli_state_after(peer, tlli_info, now,
 							&tmp_parse_ctx);
 
-			rc = gbprox_relay2sgsn(cfg, stored_msg, peer,
-					       msgb_bvci(msg));
+			rc = gbprox_relay2sgsn(cfg, stored_msg, msgb_bvci(msg),
+					       cfg->nsip_sgsn_nsei);
 
 			if (rc < 0)
 				LOGP(DLLC, LOGL_ERROR,
@@ -498,7 +498,7 @@ static void gbprox_process_bssgp_dl(struct gbproxy_config *cfg,
 
 /* feed a message down the NS-VC associated with the specified peer */
 static int gbprox_relay2sgsn(struct gbproxy_config *cfg, struct msgb *old_msg,
-			     uint16_t ns_bvci)
+			     uint16_t ns_bvci, uint16_t sgsn_nsei)
 {
 	/* create a copy of the message so the old one can
 	 * be free()d safely when we return from gbprox_rcvmsg() */
@@ -506,10 +506,10 @@ static int gbprox_relay2sgsn(struct gbproxy_config *cfg, struct msgb *old_msg,
 	int rc;
 
 	DEBUGP(DGPRS, "NSEI=%u proxying BTS->SGSN (NS_BVCI=%u, NSEI=%u)\n",
-		msgb_nsei(msg), ns_bvci, cfg->nsip_sgsn_nsei);
+		msgb_nsei(msg), ns_bvci, sgsn_nsei);
 
 	msgb_bvci(msg) = ns_bvci;
-	msgb_nsei(msg) = cfg->nsip_sgsn_nsei;
+	msgb_nsei(msg) = sgsn_nsei;
 
 	strip_ns_hdr(msg);
 
@@ -612,7 +612,7 @@ static int gbprox_rx_ptp_from_bss(struct gbproxy_config *cfg,
 	if (!rc)
 		return 0;
 
-	return gbprox_relay2sgsn(cfg, msg, ns_bvci);
+	return gbprox_relay2sgsn(cfg, msg, ns_bvci, cfg->nsip_sgsn_nsei);
 }
 
 /* Receive an incoming PTP message from a SGSN-side NS-VC */
@@ -661,6 +661,7 @@ static int gbprox_rx_sig_from_bss(struct gbproxy_config *cfg,
 	int data_len = msgb_bssgp_len(msg) - sizeof(*bgph);
 	struct gbproxy_peer *from_peer = NULL;
 	struct gprs_ra_id raid;
+	int rc;
 
 	if (ns_bvci != 0 && ns_bvci != 1) {
 		LOGP(DGPRS, LOGL_NOTICE, "NSEI=%u BVCI=%u is not signalling\n",
@@ -750,8 +751,10 @@ static int gbprox_rx_sig_from_bss(struct gbproxy_config *cfg,
 
 	/* Normally, we can simply pass on all signalling messages from BSS to
 	 * SGSN */
-	gbprox_process_bssgp_ul(cfg, msg, from_peer);
-	return gbprox_relay2sgsn(cfg, msg, ns_bvci);
+	rc = gbprox_process_bssgp_ul(cfg, msg, from_peer);
+	if (!rc)
+		return 0;
+	return gbprox_relay2sgsn(cfg, msg, ns_bvci, cfg->nsip_sgsn_nsei);
 err_no_peer:
 	LOGP(DGPRS, LOGL_ERROR, "NSEI=%u(BSS) cannot find peer based on NSEI\n",
 		nsei);
@@ -980,12 +983,18 @@ err_no_peer:
 	return bssgp_tx_status(BSSGP_CAUSE_UNKNOWN_BVCI, NULL, orig_msg);
 }
 
+static int gbproxy_is_sgsn_nsei(struct gbproxy_config *cfg, uint16_t nsei)
+{
+	return nsei == cfg->nsip_sgsn_nsei ||
+		(cfg->route_to_sgsn2 && nsei == cfg->nsip_sgsn2_nsei);
+}
+
 /* Main input function for Gb proxy */
 int gbprox_rcvmsg(struct gbproxy_config *cfg, struct msgb *msg, uint16_t nsei,
 		uint16_t ns_bvci, uint16_t nsvci)
 {
 	int rc;
-	int remote_end_is_sgsn = nsei == cfg->nsip_sgsn_nsei;
+	int remote_end_is_sgsn = gbproxy_is_sgsn_nsei(cfg, nsei);
 
 	/* Only BVCI=0 messages need special treatment */
 	if (ns_bvci == 0 || ns_bvci == 1) {
@@ -1026,11 +1035,12 @@ int gbprox_signal(unsigned int subsys, unsigned int signal,
 	struct ns_signal_data *nssd = signal_data;
 	struct gprs_nsvc *nsvc = nssd->nsvc;
 	struct gbproxy_peer *peer;
+	int remote_end_is_sgsn = gbproxy_is_sgsn_nsei(cfg, nsvc->nsei);
 
 	if (subsys != SS_L_NS)
 		return 0;
 
-	if (signal == S_NS_RESET && nsvc->nsei == cfg->nsip_sgsn_nsei) {
+	if (signal == S_NS_RESET && remote_end_is_sgsn) {
 		/* We have received a NS-RESET from the NSEI and NSVC
 		 * of the SGSN.  This might happen with SGSN that start
 		 * their own NS-RESET procedure without waiting for our
