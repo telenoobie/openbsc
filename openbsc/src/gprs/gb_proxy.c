@@ -264,6 +264,8 @@ static int gbprox_process_bssgp_ul(struct gbproxy_config *cfg,
 	int len_change = 0;
 	time_t now;
 	struct gbproxy_tlli_info *tlli_info = NULL;
+	uint32_t sgsn_nsei = cfg->nsip_sgsn_nsei;
+	int send_msg_directly = 0;
 
 	if (!cfg->core_mcc && !cfg->core_mnc && !cfg->core_apn &&
 	    !cfg->acquire_imsi)
@@ -329,6 +331,11 @@ static int gbprox_process_bssgp_ul(struct gbproxy_config *cfg,
 
 	tlli_info = gbproxy_update_tlli_state_ul(peer, now, &parse_ctx);
 
+	if (tlli_info && tlli_info->enable_patching && cfg->route_to_sgsn2) {
+		sgsn_nsei = cfg->nsip_sgsn2_nsei;
+		send_msg_directly = 1;
+	}
+
 	if (tlli_info && tlli_info->imsi_acq_pending && parse_ctx.g48_hdr &&
 	    parse_ctx.g48_hdr->proto_discr == GSM48_PDISC_MM_GPRS &&
 	    parse_ctx.g48_hdr->msg_type == GSM48_MT_GMM_ID_RESP &&
@@ -360,7 +367,7 @@ static int gbprox_process_bssgp_ul(struct gbproxy_config *cfg,
 							&tmp_parse_ctx);
 
 			rc = gbprox_relay2sgsn(cfg, stored_msg, msgb_bvci(msg),
-					       cfg->nsip_sgsn_nsei);
+					       sgsn_nsei);
 
 			if (rc < 0)
 				LOGP(DLLC, LOGL_ERROR,
@@ -411,7 +418,6 @@ static int gbprox_process_bssgp_ul(struct gbproxy_config *cfg,
 		gprs_put_identity_req(idreq_msg, GSM_MI_TYPE_IMSI);
 		gprs_push_llc_ui(idreq_msg, 0, GPRS_SAPI_GMM, /* TODO: real nu */0);
 		gprs_push_bssgp_dl_unitdata(idreq_msg, tlli_info->tlli.current);
-		/* FIXME: idreq_msg broken */
 		gbprox_relay2peer(idreq_msg, peer, msgb_bvci(msg));
 		msgb_free(idreq_msg);
 
@@ -425,6 +431,13 @@ static int gbprox_process_bssgp_ul(struct gbproxy_config *cfg,
 			    peer, tlli_info, &len_change, &parse_ctx);
 
 	gbproxy_update_tlli_state_after(peer, tlli_info, now, &parse_ctx);
+
+	/* Experimental, used for SGSN 2 */
+	/* TODO: Move this to the calling function */
+	if (send_msg_directly) {
+		rc = gbprox_relay2sgsn(cfg, msg, msgb_bvci(msg), sgsn_nsei);
+		return 0;
+	}
 
 	return 1;
 }
@@ -621,6 +634,8 @@ static int gbprox_rx_ptp_from_sgsn(struct gbproxy_config *cfg,
 				   uint16_t nsvci, uint16_t ns_bvci)
 {
 	struct gbproxy_peer *peer;
+	struct bssgp_normal_hdr *bgph = (struct bssgp_normal_hdr *) msgb_bssgph(msg);
+	uint8_t pdu_type = bgph->pdu_type;
 
 	peer = gbproxy_peer_by_bvci(cfg, ns_bvci);
 
@@ -642,6 +657,19 @@ static int gbprox_rx_ptp_from_sgsn(struct gbproxy_config *cfg,
 		     ns_bvci, nsvci, nsei);
 		rate_ctr_inc(&peer->ctrg->ctr[GBPROX_PEER_CTR_DROPPED]);
 		return bssgp_tx_status(BSSGP_CAUSE_BVCI_BLOCKED, NULL, msg);
+	}
+
+	switch (pdu_type) {
+	case BSSGP_PDUT_FLOW_CONTROL_BVC_ACK:
+	case BSSGP_PDUT_BVC_BLOCK_ACK:
+	case BSSGP_PDUT_BVC_UNBLOCK_ACK:
+		if (cfg->route_to_sgsn2 && nsei == cfg->nsip_sgsn2_nsei)
+			/* Hide ACKs from the secondary SGSN, the primary SGSN
+			 * is responsible to send them. */
+			return 0;
+		break;
+	default:
+		break;
 	}
 
 	/* Optionally patch the message */
@@ -887,8 +915,11 @@ static int gbprox_rx_sig_from_sgsn(struct gbproxy_config *cfg,
 	case BSSGP_PDUT_BVC_RESET:
 		rc = rx_reset_from_sgsn(cfg, msg, orig_msg, &tp, nsei, ns_bvci);
 		break;
-	case BSSGP_PDUT_FLUSH_LL:
 	case BSSGP_PDUT_BVC_RESET_ACK:
+		if (cfg->route_to_sgsn2 && nsei == cfg->nsip_sgsn2_nsei)
+			break;
+		/* fall through */
+	case BSSGP_PDUT_FLUSH_LL:
 		/* simple case: BVCI IE is mandatory */
 		if (!TLVP_PRESENT(&tp, BSSGP_IE_BVCI))
 			goto err_mand_ie;
