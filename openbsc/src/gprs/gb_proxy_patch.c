@@ -345,7 +345,9 @@ void gbproxy_patch_bssgp(struct msgb *msg, uint8_t *bssgp, size_t bssgp_len,
 		if (tlli) {
 			gbproxy_patch_tlli(parse_ctx->tlli_enc, peer, tlli,
 					   parse_ctx->to_bss, "TLLI");
-			parse_ctx->tlli = tlli;
+			/* Ensure that the tlli field refers to the BSS side */
+			if (parse_ctx->to_bss)
+				parse_ctx->tlli = tlli;
 		} else if (parse_ctx->to_bss) {
 			/* Happens with unknown (not cached) TLLI coming from
 			 * the SGSN */
