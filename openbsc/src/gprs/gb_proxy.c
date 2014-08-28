@@ -614,6 +614,8 @@ static int gbprox_rx_ptp_from_bss(struct gbproxy_config *cfg,
 				  uint16_t nsvci, uint16_t ns_bvci)
 {
 	struct gbproxy_peer *peer;
+	struct bssgp_normal_hdr *bgph = (struct bssgp_normal_hdr *) msgb_bssgph(msg);
+	uint8_t pdu_type = bgph->pdu_type;
 	int rc;
 
 	peer = gbproxy_peer_by_bvci(cfg, ns_bvci);
@@ -624,6 +626,19 @@ static int gbprox_rx_ptp_from_bss(struct gbproxy_config *cfg,
 	rc = gbprox_process_bssgp_ul(cfg, msg, peer);
 	if (!rc)
 		return 0;
+
+	switch (pdu_type) {
+	case BSSGP_PDUT_FLOW_CONTROL_BVC:
+		if (!cfg->route_to_sgsn2)
+			break;
+
+		/* Send a copy to the secondary SGSN */
+		gbprox_relay2sgsn(cfg, msg, ns_bvci, cfg->nsip_sgsn2_nsei);
+		break;
+	default:
+		break;
+	}
+
 
 	return gbprox_relay2sgsn(cfg, msg, ns_bvci, cfg->nsip_sgsn_nsei);
 }
@@ -689,6 +704,7 @@ static int gbprox_rx_sig_from_bss(struct gbproxy_config *cfg,
 	int data_len = msgb_bssgp_len(msg) - sizeof(*bgph);
 	struct gbproxy_peer *from_peer = NULL;
 	struct gprs_ra_id raid;
+	int copy_to_sgsn2 = 0;
 	int rc;
 
 	if (ns_bvci != 0 && ns_bvci != 1) {
@@ -773,6 +789,8 @@ static int gbprox_rx_sig_from_bss(struct gbproxy_config *cfg,
 				     bvci, raid.mcc, raid.mnc, raid.lac,
 				     raid.rac);
 			}
+			if (cfg->route_to_sgsn2)
+				copy_to_sgsn2 = 1;
 		}
 		break;
 	}
@@ -782,6 +800,10 @@ static int gbprox_rx_sig_from_bss(struct gbproxy_config *cfg,
 	rc = gbprox_process_bssgp_ul(cfg, msg, from_peer);
 	if (!rc)
 		return 0;
+
+	if (copy_to_sgsn2)
+		gbprox_relay2sgsn(cfg, msg, ns_bvci, cfg->nsip_sgsn2_nsei);
+
 	return gbprox_relay2sgsn(cfg, msg, ns_bvci, cfg->nsip_sgsn_nsei);
 err_no_peer:
 	LOGP(DGPRS, LOGL_ERROR, "NSEI=%u(BSS) cannot find peer based on NSEI\n",
